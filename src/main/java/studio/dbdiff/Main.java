@@ -351,7 +351,8 @@ public final class Main {
         long request = ++comparisonRequest;
         selectionRequest++;
         rowComparisonRequest++;
-        Set<SchemaObject.Key> selectedKeys = selectedObjectKeys();
+        Set<SchemaObject.Key> selectedKeys = refreshCatalog && resultList.getSelectedValuesList().size() > 1
+                ? selectedObjectKeys() : Set.of();
         Set<SchemaObject.Kind> kinds = Set.copyOf(selectedKinds);
         Set<SchemaObject.Key> loadedA = Set.copyOf(loadedSourceKeys), loadedB = Set.copyOf(loadedTargetKeys);
         List<SchemaObject> existingSourceCatalog = sourceObjects, existingTargetCatalog = targetObjects;
@@ -651,7 +652,7 @@ public final class Main {
         // antiguas si el usuario seleccionó otra tabla antes de terminar.
         worker.submit(() -> {
             try {
-                RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), 10000);
+                RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), Integer.MAX_VALUE);
                 SwingUtilities.invokeLater(() -> {
                     if (request != rowComparisonRequest || !isSelected(selected.key())) return;
                     try {
@@ -740,7 +741,8 @@ public final class Main {
     }
 
     private static String rowSummary(RowDiff.Result rows) {
-        return "Filas revisadas · " + rows.matchedRows() + " claves coincidentes · " + rows.sourceOnly()
+        long totalRows = rows.matchedRows() + rows.sourceOnly() + rows.targetOnly();
+        return "Filas revisadas · " + totalRows + " en total · " + rows.matchedRows() + " claves coincidentes · " + rows.sourceOnly()
                 + " solo en origen · " + rows.targetOnly() + " solo en destino · " + rows.different() + " diferentes"
                 + (rows.truncated() ? " · resultados limitados" : "");
     }
@@ -840,6 +842,7 @@ public final class Main {
             case SOURCE_ONLY -> inserts;
             case DIFFERENT -> updates;
             case TARGET_ONLY -> deletes;
+            case IDENTICAL -> false;
         });
     }
 

@@ -111,6 +111,7 @@ final class RowComparisonPanel extends JPanel {
         long additions = result.changes().stream().filter(change -> change.status() == RowDiff.Status.SOURCE_ONLY).count();
         long removals = result.changes().stream().filter(change -> change.status() == RowDiff.Status.TARGET_ONLY).count();
         long modifications = result.changes().stream().filter(change -> change.status() == RowDiff.Status.DIFFERENT).count();
+        long identical = result.changes().stream().filter(change -> change.status() == RowDiff.Status.IDENTICAL).count();
         String primaryKey = result.primaryKey().stream().map(RowDiff.Column::name).collect(Collectors.joining(", "));
         summary.setText(result.table().name() + " · " + result.matchedRows() + " claves coincidentes · "
                 + result.sourceOnly() + " solo en origen · " + result.targetOnly() + " solo en destino · "
@@ -130,7 +131,8 @@ final class RowComparisonPanel extends JPanel {
             JPanel toolbar = new JPanel(new BorderLayout(8, 0)); toolbar.setOpaque(false);
             JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0)); filters.setOpaque(false);
             ButtonGroup group = new ButtonGroup();
-            addFilter(filters, group, "Todas", null, result.changes().size(), "Mostrar todos los registros con diferencias.");
+            addFilter(filters, group, "Todas", null, result.changes().size(), "Mostrar todas las filas comparadas, incluidas las idénticas.");
+            addFilter(filters, group, "Iguales", RowDiff.Status.IDENTICAL, identical, "Filas idénticas en origen y destino.");
             addFilter(filters, group, "Agregadas", RowDiff.Status.SOURCE_ONLY, additions, "Solo en origen; exportar como INSERT hacia destino.");
             addFilter(filters, group, "Quitadas", RowDiff.Status.TARGET_ONLY, removals, "Solo en destino; exportar como DELETE para igualar con origen.");
             addFilter(filters, group, "Modificadas", RowDiff.Status.DIFFERENT, modifications, "Presentes en ambos lados con valores distintos.");
@@ -323,6 +325,7 @@ final class RowComparisonPanel extends JPanel {
             case SOURCE_ONLY -> "Agregada · solo origen";
             case TARGET_ONLY -> "Quitada · solo destino";
             case DIFFERENT -> "Modificada";
+            case IDENTICAL -> "Igual";
         };
     }
 
@@ -338,6 +341,7 @@ final class RowComparisonPanel extends JPanel {
                         ? new FieldValue("O: " + source + " → D: " + target, "Origen: " + source + "\nDestino: " + target, true)
                         : new FieldValue(source, "Igual en origen y destino: " + source, false);
             }
+            case IDENTICAL -> new FieldValue(source, "Igual en origen y destino: " + source, false);
         };
     }
 
@@ -368,6 +372,7 @@ final class RowComparisonPanel extends JPanel {
                 String status = String.valueOf(table.getModel().getValueAt(modelRow, 0));
                 if (status.startsWith("Agregada")) setBackground(dark ? new Color(35, 84, 66) : new Color(222, 246, 229));
                 else if (status.startsWith("Quitada")) setBackground(dark ? new Color(104, 48, 52) : new Color(255, 226, 226));
+                else if (status.startsWith("Igual")) setBackground(table.getBackground());
                 else if (field.different()) setBackground(dark ? new Color(91, 69, 34) : new Color(255, 241, 204));
                 else setBackground(table.getBackground());
             }
@@ -385,6 +390,7 @@ final class RowComparisonPanel extends JPanel {
                 String status = String.valueOf(value);
                 if (status.startsWith("Agregada")) cell.setBackground(dark ? new Color(35, 84, 66) : new Color(222, 246, 229));
                 else if (status.startsWith("Quitada")) cell.setBackground(dark ? new Color(104, 48, 52) : new Color(255, 226, 226));
+                else if (status.startsWith("Igual")) cell.setBackground(table.getBackground());
                 else cell.setBackground(dark ? new Color(91, 69, 34) : new Color(255, 241, 204));
             }
             return cell;

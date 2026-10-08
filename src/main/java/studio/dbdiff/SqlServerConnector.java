@@ -423,13 +423,15 @@ public final class SqlServerConnector implements DatabaseConnector {
                         counts[3]++;
                         if (!rowsEqual(sourceRow, targetRow, columns)) {
                             counts[2]++; retain(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.DIFFERENT, keyOf(sourceRow, primaryKey), sourceRow, targetRow));
+                        } else {
+                            retain(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.IDENTICAL, keyOf(sourceRow, primaryKey), sourceRow, targetRow));
                         }
                         hasSource = sourceRows.next(); hasTarget = targetRows.next();
                     }
                 }
             }
         }
-        boolean truncated = counts[0] + counts[1] + counts[2] > changes.size();
+        boolean truncated = counts[0] + counts[1] + counts[3] > changes.size();
         return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
                 truncated ? "Only the first " + maxChanges + " row changes are retained; export is limited to those rows." : "");
     }

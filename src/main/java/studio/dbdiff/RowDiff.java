@@ -5,7 +5,7 @@ import java.util.*;
 /** Immutable result model shared by database comparison and the Swing view. */
 public final class RowDiff {
     private RowDiff() { }
-    public enum Status { SOURCE_ONLY, TARGET_ONLY, DIFFERENT }
+    public enum Status { SOURCE_ONLY, TARGET_ONLY, DIFFERENT, IDENTICAL }
     public record Column(String name, String type, String columnType, boolean nullable) {
         public Column(String name, String columnType, boolean nullable) { this(name, baseType(columnType), columnType, nullable); }
         private static String baseType(String columnType) {

@@ -58,6 +58,7 @@ public final class RowSqlExporter {
                     statements.append(" WHERE ").append(predicate(result.primaryKey(), change.key(), engine))
                             .append(sqlServer ? ";\n" : " LIMIT 1;\n");
                 }
+                case IDENTICAL -> { /* No migration is needed for an unchanged row. */ }
             }
         }
         if (sqlServer) sql.append("USE ").append(quote(result.targetDatabase(), engine)).append(";\nGO\n\n");

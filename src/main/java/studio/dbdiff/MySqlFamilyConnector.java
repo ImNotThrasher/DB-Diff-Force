@@ -247,13 +247,15 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
                         counts[3]++;
                         if (!rowsEqual(rowA, rowB, columns)) {
                             counts[2]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.DIFFERENT, keyOf(rowA, primaryKey), rowA, rowB));
+                        } else {
+                            addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.IDENTICAL, keyOf(rowA, primaryKey), rowA, rowB));
                         }
                         hasA = a.next(); hasB = b.next();
                     }
                 }
             }
         }
-        truncated = counts[0] + counts[1] + counts[2] > changes.size();
+        truncated = counts[0] + counts[1] + counts[3] > changes.size();
         return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
                 truncated ? "Only the first " + maxChanges + " row changes are retained; export is limited to those rows." : "");
     }
