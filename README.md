@@ -1,11 +1,11 @@
-# DB-DiffForce
+# DB-Diff-Force
 
 ![Java 21](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
 ![Maven](https://img.shields.io/badge/Maven-3.9+-C71A36?logo=apachemaven&logoColor=white)
 ![MariaDB](https://img.shields.io/badge/MariaDB-compatible-003545?logo=mariadb&logoColor=white)
 ![MySQL](https://img.shields.io/badge/MySQL-compatible-4479A1?logo=mysql&logoColor=white)
 
-DB-DiffForce es una aplicación de escritorio para comparar esquemas de MariaDB y MySQL y exportar SQL para revisar. Se conecta a dos bases, permite elegir tablas, vistas y rutinas, muestra objetos faltantes o modificados y genera SQL para los elementos seleccionados. La aplicación nunca ejecuta el SQL generado.
+DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB y MySQL y exportar SQL para revisar. Se conecta a dos bases, permite elegir tablas, vistas y rutinas, muestra objetos faltantes o modificados y genera SQL para los elementos seleccionados. La aplicación nunca ejecuta el SQL generado.
 
 ## Índice
 
@@ -23,7 +23,7 @@ DB-DiffForce es una aplicación de escritorio para comparar esquemas de MariaDB 
 
 ## Ejecución
 
-En Windows, ejecutá `run.bat`. El script compila el JAR ejecutable y abre la aplicación en una ventana independiente. La terminal vuelve a mostrar el prompt mientras la aplicación queda abierta. En macOS o Linux, ejecutá `./run.sh`; el script compila y abre la aplicación. Para compilar sin abrirla, ejecutá `mvn package`: la aplicación queda en `target/db-diffforce-0.2.0.jar`, con los controladores JDBC en `target/lib`. Maven descarga los controladores y sus dependencias a la caché local. Las credenciales no se guardan allí.
+En Windows, ejecutá `run.bat`. El script compila el JAR ejecutable y abre la aplicación en una ventana independiente. La terminal vuelve a mostrar el prompt mientras la aplicación queda abierta. En macOS o Linux, ejecutá `./run.sh`; el script compila y abre la aplicación. Para compilar sin abrirla, ejecutá `mvn package`: la aplicación queda en `target/db-diff-force-0.2.0.jar`, con los controladores JDBC en `target/lib`. Maven descarga los controladores y sus dependencias a la caché local. Las credenciales no se guardan allí.
 
 En la ventana de conexión, elegí el motor y completá los datos de cada extremo. Al pulsar **Probar conexión**, se verifica el servidor y se cargan las bases visibles para esa cuenta; después elegí una base de la lista. En esta versión, ambos extremos usan el mismo motor. Los perfiles guardados se pueden elegir por separado para el origen y el destino. Guardan el motor, servidor, puerto, base, usuario y configuración TLS en `~/.db-diff-studio/connections.properties` para conservar los perfiles existentes. Las contraseñas nunca se guardan; hay que ingresarlas en cada sesión. TLS se puede habilitar por conexión.
 
