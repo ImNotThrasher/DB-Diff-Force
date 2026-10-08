@@ -85,7 +85,7 @@ public final class Main {
         Endpoint[] endpoints = dialog.endpoints;
         setBusy(true, "Connecting and reading object lists…");
         worker.submit(() -> {
-            DatabaseConnector a = new MariaDbConnector(), b = new MariaDbConnector();
+            DatabaseConnector a = DatabaseConnectorFactory.create(endpoints[0]), b = DatabaseConnectorFactory.create(endpoints[1]);
             try {
                 a.connect(endpoints[0]); b.connect(endpoints[1]);
                 List<SchemaObject> ao = a.listObjects(), bo = b.listObjects();
@@ -263,18 +263,22 @@ public final class Main {
         private final JTextField[][] fields = new JTextField[2][4];
         private final JPasswordField[] passwords = {new JPasswordField(), new JPasswordField()};
         private final JCheckBox[] tls = {new JCheckBox("Use TLS and verify server certificate"), new JCheckBox("Use TLS and verify server certificate")};
+        private final JComboBox<DatabaseEngine> engine = new JComboBox<>(DatabaseEngine.values());
         EndpointDialog(JFrame owner) {
             super(owner, "Connect endpoints", true); setLayout(new BorderLayout(10, 10)); JPanel form = new JPanel(new GridBagLayout()); form.setBorder(new EmptyBorder(16, 20, 10, 20));
+            engine.addActionListener(e -> { String port = Integer.toString(((DatabaseEngine) engine.getSelectedItem()).defaultPort()); fields[0][1].setText(port); fields[1][1].setText(port); });
+            GridBagConstraints engineConstraints = new GridBagConstraints(); engineConstraints.insets = new Insets(5, 6, 5, 6); engineConstraints.anchor = GridBagConstraints.WEST; engineConstraints.gridx = 0; engineConstraints.gridy = 0;
+            form.add(new JLabel("Database engine"), engineConstraints); engineConstraints.gridx = 1; engineConstraints.gridwidth = 3; form.add(engine, engineConstraints);
             String[] labels = {"Host", "Port", "Database", "Username"}; String[] defaults = {"127.0.0.1", "3306", "", ""};
             for (int side = 0; side < 2; side++) {
                 GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(5, 6, 5, 6); c.anchor = GridBagConstraints.WEST;
-                c.gridx = side; c.gridy = 0; c.gridwidth = 2; JLabel header = new JLabel(side == 0 ? "SOURCE DATABASE" : "TARGET DATABASE"); header.setFont(new Font("Segoe UI", Font.BOLD, 11)); form.add(header, c);
+                c.gridx = side * 2; c.gridy = 1; c.gridwidth = 2; JLabel header = new JLabel(side == 0 ? "SOURCE DATABASE" : "TARGET DATABASE"); header.setFont(new Font("Segoe UI", Font.BOLD, 11)); form.add(header, c);
                 for (int row = 0; row < labels.length; row++) {
-                    c.gridy = row + 1; c.gridwidth = 1; c.gridx = side * 2; form.add(new JLabel(labels[row]), c);
+                    c.gridy = row + 2; c.gridwidth = 1; c.gridx = side * 2; form.add(new JLabel(labels[row]), c);
                     c.gridx = side * 2 + 1; JTextField f = new JTextField(defaults[row], 15); fields[side][row] = f; form.add(f, c);
                 }
-                c.gridy = 5; c.gridx = side * 2; form.add(new JLabel("Password"), c); c.gridx = side * 2 + 1; passwords[side].setEchoChar('•'); form.add(passwords[side], c);
-                c.gridy = 6; c.gridx = side * 2; c.gridwidth = 2; form.add(tls[side], c);
+                c.gridy = 6; c.gridx = side * 2; form.add(new JLabel("Password"), c); c.gridx = side * 2 + 1; passwords[side].setEchoChar('•'); form.add(passwords[side], c);
+                c.gridy = 7; c.gridx = side * 2; c.gridwidth = 2; form.add(tls[side], c);
             }
             JLabel secure = new JLabel("Passwords are held only in memory for this session; TLS is recommended for remote servers."); secure.setBorder(new EmptyBorder(0, 20, 0, 20));
             JButton cancel = new JButton("Cancel"), connect = button("Connect", true); JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT)); buttons.add(cancel); buttons.add(connect);
@@ -283,7 +287,8 @@ public final class Main {
         private void accept() {
             try {
                 endpoints = new Endpoint[2];
-                for (int i = 0; i < 2; i++) endpoints[i] = new Endpoint(fields[i][0].getText().trim(), Integer.parseInt(fields[i][1].getText().trim()), fields[i][2].getText().trim(), fields[i][3].getText().trim(), passwords[i].getPassword(), tls[i].isSelected());
+                DatabaseEngine selectedEngine = (DatabaseEngine) engine.getSelectedItem();
+                for (int i = 0; i < 2; i++) endpoints[i] = new Endpoint(selectedEngine, fields[i][0].getText().trim(), Integer.parseInt(fields[i][1].getText().trim()), fields[i][2].getText().trim(), fields[i][3].getText().trim(), passwords[i].getPassword(), tls[i].isSelected());
                 dispose();
             } catch (RuntimeException ex) { JOptionPane.showMessageDialog(this, "Check the endpoint fields: " + ex.getMessage(), "Invalid connection details", JOptionPane.WARNING_MESSAGE); }
         }
