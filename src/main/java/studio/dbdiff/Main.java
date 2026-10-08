@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -80,7 +81,7 @@ public final class Main {
     };
     private final ComparisonView comparisonView = new ComparisonView();
     private final RowComparisonPanel rowComparisonPanel = new RowComparisonPanel((rows, options) ->
-            saveRowSql(rows, options.inserts(), options.updates(), options.deletes()));
+            saveRowSql(rows, options.inserts(), options.updates(), options.deletes()), this::rowPanelExpanded);
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
     private DatabaseConnector source, target;
@@ -93,6 +94,13 @@ public final class Main {
     private JSplitPane workspaceSplit;
     private JButton layoutButton;
     private final Set<SchemaObject.Key> comparedKeys = new TreeSet<>();
+    private final Set<SchemaObject.Key> loadedSourceKeys = ConcurrentHashMap.newKeySet();
+    private final Set<SchemaObject.Key> loadedTargetKeys = ConcurrentHashMap.newKeySet();
+    private DiffEngine.Result selectedSchemaResult;
+    private long selectionRequest;
+    private long rowComparisonRequest;
+    private long comparisonRequest;
+    private boolean updatingResultItems;
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "schema-reader"); t.setDaemon(true); return t; });
 
     private Main() { }
@@ -170,13 +178,14 @@ public final class Main {
 
     private void connect() {
         Endpoint[] endpoints = ConnectionDialog.showDialog(frame, theme); if (endpoints == null) return;
+        comparisonRequest++; selectionRequest++; rowComparisonRequest++;
         setBusy(true, "Conectando y leyendo las listas de objetos…");
         worker.submit(() -> {
             DatabaseConnector a = DatabaseConnectorFactory.create(endpoints[0]), b = DatabaseConnectorFactory.create(endpoints[1]);
             try {
                 a.connect(endpoints[0]); b.connect(endpoints[1]);
                 List<SchemaObject> ao = a.listObjects(), bo = b.listObjects();
-                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; sourceDatabase = endpoints[0].database(); targetDatabase = endpoints[1].database(); comparisonView.setDatabases(sourceDatabase, targetDatabase); sourceObjects = ao; targetObjects = bo; compared = false; comparedKeys.clear(); showCatalog(); setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos encontrados · sin comparar"); });
+                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; sourceDatabase = endpoints[0].database(); targetDatabase = endpoints[1].database(); comparisonView.setDatabases(sourceDatabase, targetDatabase); sourceObjects = ao; targetObjects = bo; loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null; compared = false; comparedKeys.clear(); showCatalog(); setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos encontrados · seleccioná un objeto para cargar su definición"); });
             } catch (SQLException | RuntimeException ex) { a.close(); b.close(); SwingUtilities.invokeLater(() -> { setBusy(false, "Error de conexión"); error("No se pudo conectar", ex); }); }
             finally { endpoints[0].clearPassword(); endpoints[1].clearPassword(); }
         });
@@ -184,21 +193,38 @@ public final class Main {
 
     private void compare() {
         if (source == null || target == null) { JOptionPane.showMessageDialog(frame, "Conectá ambas bases antes de comparar.", "Bases sin conexión", JOptionPane.INFORMATION_MESSAGE); return; }
+        long request = ++comparisonRequest;
+        selectionRequest++;
+        rowComparisonRequest++;
         Set<SchemaObject.Key> selectedKeys = selectedObjectKeys();
+        Set<SchemaObject.Kind> kinds = Set.copyOf(selectedKinds);
+        Set<SchemaObject.Key> loadedA = Set.copyOf(loadedSourceKeys), loadedB = Set.copyOf(loadedTargetKeys);
+        List<SchemaObject> sourceCatalog = sourceObjects, targetCatalog = targetObjects;
+        DatabaseConnector sourceConnector = source, targetConnector = target;
         setBusy(true, "Comparando los tipos de objetos seleccionados…");
         worker.submit(() -> {
             try {
-                List<SchemaObject> a = loadSelected(source, sourceObjects, selectedKinds, selectedKeys), b = loadSelected(target, targetObjects, selectedKinds, selectedKeys);
-                List<DiffEngine.Result> results = new DiffEngine().compare(a, b, selectedKinds, selectedKeys);
-                SwingUtilities.invokeLater(() -> { sourceObjects = mergeLoaded(sourceObjects, a); targetObjects = mergeLoaded(targetObjects, b); compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results); rowComparisonPanel.clear(); comparisonView.showMessage(""); setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios"); });
-            } catch (SQLException ex) { SwingUtilities.invokeLater(() -> { setBusy(false, "Error al comparar"); error("No se pudieron leer las definiciones del esquema", ex); }); }
+                List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, loadedA), b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, loadedB);
+                List<DiffEngine.Result> results = new DiffEngine().compare(a, b, kinds, selectedKeys);
+                SwingUtilities.invokeLater(() -> {
+                    if (request != comparisonRequest) return;
+                    sourceObjects = mergeLoaded(sourceObjects, a); targetObjects = mergeLoaded(targetObjects, b);
+                    a.forEach(o -> loadedSourceKeys.add(o.key())); b.forEach(o -> loadedTargetKeys.add(o.key()));
+                    compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results);
+                    rowComparisonPanel.clearResult(false); selectedSchemaResult = null; comparisonView.showMessage("");
+                    if (selectedKeys.size() == 1 && !results.isEmpty()) resultList.setSelectedValue(results.get(0), true);
+                    setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios");
+                });
+            } catch (SQLException ex) { SwingUtilities.invokeLater(() -> { if (request != comparisonRequest) return; setBusy(false, "Error al comparar"); error("No se pudieron leer las definiciones del esquema", ex); }); }
         });
     }
 
-    private static List<SchemaObject> loadSelected(DatabaseConnector connector, List<SchemaObject> catalog, Set<SchemaObject.Kind> kinds, Set<SchemaObject.Key> selected) throws SQLException {
-        List<SchemaObject> loaded = new ArrayList<>();
-        for (SchemaObject object : catalog) if (kinds.contains(object.key().kind()) && (selected.isEmpty() || selected.contains(object.key()))) loaded.add(connector.loadObject(object.key()));
-        return loaded;
+    private static List<SchemaObject> loadSelected(DatabaseConnector connector, List<SchemaObject> catalog, Set<SchemaObject.Kind> kinds,
+                                                   Set<SchemaObject.Key> selected, Set<SchemaObject.Key> cachedKeys) throws SQLException {
+        List<SchemaObject> result = new ArrayList<>();
+        for (SchemaObject object : catalog) if (kinds.contains(object.key().kind()) && (selected.isEmpty() || selected.contains(object.key())))
+            result.add(cachedKeys.contains(object.key()) ? object : connector.loadObject(object.key()));
+        return result;
     }
 
     private void refreshResults() {
@@ -246,23 +272,33 @@ public final class Main {
     private void setResultItems(List<?> items) {
         List<Object> selected = resultList.getSelectedValuesList();
         allResultItems.clear(); allResultItems.addAll(items);
-        resultModel.clear();
-        String query = objectSearch.getText().trim().toLowerCase(Locale.ROOT);
-        for (Object item : allResultItems) if (matchesObjectSearch(item, query)) resultModel.addElement(item);
-        for (Object item : selected) {
-            int index = resultModel.indexOf(item);
-            if (index >= 0) resultList.addSelectionInterval(index, index);
+        updatingResultItems = true;
+        try {
+            resultModel.clear();
+            String query = objectSearch.getText().trim().toLowerCase(Locale.ROOT);
+            for (Object item : allResultItems) if (matchesObjectSearch(item, query)) resultModel.addElement(item);
+            for (Object item : selected) {
+                int index = resultModel.indexOf(item);
+                if (index >= 0) resultList.addSelectionInterval(index, index);
+            }
+        } finally {
+            updatingResultItems = false;
         }
     }
 
     private void applyResultFilter() {
         String query = objectSearch.getText().trim().toLowerCase(Locale.ROOT);
         List<Object> selected = resultList.getSelectedValuesList();
-        resultModel.clear();
-        for (Object item : allResultItems) if (matchesObjectSearch(item, query)) resultModel.addElement(item);
-        for (Object item : selected) {
-            int index = resultModel.indexOf(item);
-            if (index >= 0) resultList.addSelectionInterval(index, index);
+        updatingResultItems = true;
+        try {
+            resultModel.clear();
+            for (Object item : allResultItems) if (matchesObjectSearch(item, query)) resultModel.addElement(item);
+            for (Object item : selected) {
+                int index = resultModel.indexOf(item);
+                if (index >= 0) resultList.addSelectionInterval(index, index);
+            }
+        } finally {
+            updatingResultItems = false;
         }
     }
 
@@ -289,29 +325,154 @@ public final class Main {
     }
 
     private void selectResult(ListSelectionEvent e) {
-        if (e.getValueIsAdjusting()) return;
-        if (resultList.getSelectedValuesList().size() > 1) { rowComparisonPanel.clear(); comparisonView.showMessage("Seleccionaste varios objetos. Elegí Comparar para analizarlos o seleccioná un resultado para ver sus detalles."); return; }
+        if (updatingResultItems || e.getValueIsAdjusting()) return;
+        long request = ++selectionRequest;
+        rowComparisonRequest++;
+        selectedSchemaResult = null;
+        rowComparisonPanel.clearResult(false);
+        if (resultList.getSelectedValuesList().size() > 1) { setBusy(false, "Varios objetos seleccionados"); comparisonView.showMessage("Seleccionaste varios objetos. Elegí Comparar para analizarlos o seleccioná un resultado para ver sus detalles."); if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("Seleccioná una sola tabla para comparar filas."); return; }
         Object item = resultList.getSelectedValue();
-        if (item != null) rowComparisonPanel.clear();
-        if (item instanceof CatalogItem catalog) { comparisonView.showMessage(catalog.key() + "\nEstado: SIN COMPARAR\nOrigen: " + (catalog.sourcePresent() ? "presente" : "faltante") + "\nDestino: " + (catalog.targetPresent() ? "presente" : "faltante") + "\n\nElegí Comparar para revisar las definiciones."); return; }
-        if (!(item instanceof DiffEngine.Result selected)) return;
+        if (item != null) setBusy(false, "Objeto seleccionado · " + objectKey(item).name());
+        if (item instanceof CatalogItem catalog) { loadCatalogSelection(catalog, request); return; }
+        if (!(item instanceof DiffEngine.Result selected)) { if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("Seleccioná una tabla para comparar sus filas."); return; }
+        selectedSchemaResult = selected;
         comparisonView.showResult(selected, AppTheme.isDark(theme));
+        if (rowComparisonPanel.isExpanded()) {
+            if (selected.key().kind() == SchemaObject.Kind.TABLE) compareRowsForSelection();
+            else rowComparisonPanel.showMessage("La comparación de filas está disponible para tablas.");
+        }
     }
 
     private void compareRows() {
-        List<Object> selectedItems = resultList.getSelectedValuesList();
-        if (source == null || target == null) { JOptionPane.showMessageDialog(frame, "Conectá ambas bases antes de comparar filas.", "Bases sin conexión", JOptionPane.INFORMATION_MESSAGE); return; }
-        if (selectedItems.size() != 1 || !(selectedItems.get(0) instanceof DiffEngine.Result selected) || selected.key().kind() != SchemaObject.Kind.TABLE || selected.source() == null || selected.target() == null) {
-            JOptionPane.showMessageDialog(frame, "Seleccioná una tabla que exista en ambas bases.", "Elegí una tabla comparable", JOptionPane.INFORMATION_MESSAGE); return;
+        if (!rowComparisonPanel.isExpanded()) { rowComparisonPanel.setExpanded(true); return; }
+        compareRowsForSelection();
+    }
+
+    private void rowPanelExpanded(boolean expanded) {
+        if (expanded) compareRowsForSelection();
+    }
+
+    private void compareRowsForSelection() {
+        if (source == null || target == null) {
+            rowComparisonPanel.showMessage("Conectá ambas bases para comparar filas.");
+            setBusy(false, "Sin conexión");
+            return;
         }
+        List<Object> selectedItems = resultList.getSelectedValuesList();
+        if (selectedItems.size() == 1 && selectedItems.get(0) instanceof CatalogItem catalog) {
+            if (selectedSchemaResult != null && selectedSchemaResult.key().equals(catalog.key())) startRowComparison(selectedSchemaResult);
+            else loadCatalogSelection(catalog, selectionRequest);
+            return;
+        }
+        if (selectedItems.size() != 1 || !(selectedItems.get(0) instanceof DiffEngine.Result selected)) {
+            rowComparisonPanel.showMessage("Seleccioná una tabla para comparar sus filas.");
+            return;
+        }
+        startRowComparison(selected);
+    }
+
+    private void startRowComparison(DiffEngine.Result selected) {
+        if (selected.key().kind() != SchemaObject.Kind.TABLE || selected.source() == null || selected.target() == null) {
+            rowComparisonPanel.showMessage("La comparación de filas requiere una tabla presente en ambas bases.");
+            return;
+        }
+        long request = ++rowComparisonRequest;
+        DatabaseConnector sourceConnector = source, targetConnector = target;
+        rowComparisonPanel.showLoading(selected.key().name());
         setBusy(true, "Leyendo las filas de " + selected.key().name() + "…");
         worker.submit(() -> {
             try {
-                RowDiff.Result rows = source.compareTableRows(target, selected.key(), 10000);
-                SwingUtilities.invokeLater(() -> { setBusy(false, "Filas revisadas · " + rows.matchedRows() + " claves coincidentes · " + rows.sourceOnly() + " solo en origen · " + rows.targetOnly() + " solo en destino · " + rows.different() + " diferentes" + (rows.truncated() ? " · resultados limitados" : "")); rowComparisonPanel.showResult(rows); });
-            } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> { setBusy(false, "No se compararon las filas"); error("No se pudieron comparar las filas", ex); }); }
+                RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), 10000);
+                SwingUtilities.invokeLater(() -> {
+                    if (request != rowComparisonRequest || !isSelected(selected.key())) return;
+                    try {
+                        rowComparisonPanel.showResult(rows);
+                        setBusy(false, rowSummary(rows));
+                    } catch (RuntimeException renderError) {
+                        renderError.printStackTrace();
+                        rowComparisonPanel.showMessage("La comparación terminó, pero no se pudo mostrar el resultado: " + errorMessage(renderError));
+                        setBusy(false, "Filas comparadas; error al mostrar el detalle");
+                    }
+                });
+            } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> {
+                if (request != rowComparisonRequest || !isSelected(selected.key())) return;
+                setBusy(false, "No se compararon las filas"); rowComparisonPanel.showMessage("No se pudieron comparar las filas: " + errorMessage(ex));
+            }); }
         });
     }
+
+    private void loadCatalogSelection(CatalogItem catalog, long request) {
+        if (source == null || target == null) {
+            comparisonView.showMessage("Conectá ambas bases para cargar la definición del objeto.");
+            return;
+        }
+        SchemaObject.Key key = catalog.key();
+        boolean sourceReady = !catalog.sourcePresent() || loadedSourceKeys.contains(key);
+        boolean targetReady = !catalog.targetPresent() || loadedTargetKeys.contains(key);
+        if (sourceReady && targetReady) {
+            DiffEngine.Result result = compareLoadedObject(catalog);
+            selectedSchemaResult = result;
+            comparisonView.showResult(result, AppTheme.isDark(theme));
+            connectionStatus.setText("Definición comparada · " + key.name());
+            if (rowComparisonPanel.isExpanded() && key.kind() == SchemaObject.Kind.TABLE) startRowComparison(result);
+            else if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("La comparación de filas está disponible para tablas.");
+            return;
+        }
+        if (rowComparisonPanel.isExpanded() && key.kind() == SchemaObject.Kind.TABLE) rowComparisonPanel.showLoading(key.name());
+        else if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("La comparación de filas está disponible para tablas.");
+        comparisonView.showMessage("Cargando y comparando la definición de " + key.name() + "…");
+        connectionStatus.setText("Leyendo definición de " + key.name() + " en segundo plano…");
+        DatabaseConnector sourceConnector = source, targetConnector = target;
+        worker.submit(() -> {
+            try {
+                SchemaObject a = catalog.sourcePresent() ? sourceConnector.loadObject(key) : null;
+                SchemaObject b = catalog.targetPresent() ? targetConnector.loadObject(key) : null;
+                DiffEngine.Result result = compareLoadedObject(key, a, b);
+                SwingUtilities.invokeLater(() -> {
+                    if (a != null) { sourceObjects = mergeLoaded(sourceObjects, List.of(a)); loadedSourceKeys.add(key); }
+                    if (b != null) { targetObjects = mergeLoaded(targetObjects, List.of(b)); loadedTargetKeys.add(key); }
+                    if (request != selectionRequest || !isSelected(key)) return;
+                    selectedSchemaResult = result;
+                    comparisonView.showResult(result, AppTheme.isDark(theme));
+                    connectionStatus.setText("Definición comparada · " + key.name());
+                    if (rowComparisonPanel.isExpanded() && key.kind() == SchemaObject.Kind.TABLE) startRowComparison(result);
+                });
+            } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> {
+                if (request != selectionRequest || !isSelected(key)) return;
+                setBusy(false, "No se pudo cargar la definición");
+                comparisonView.showMessage("No se pudo cargar " + key.name() + ": " + errorMessage(ex));
+                if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("No se pudo cargar la tabla para comparar filas.");
+            }); }
+        });
+    }
+
+    private DiffEngine.Result compareLoadedObject(CatalogItem catalog) {
+        SchemaObject a = catalog.sourcePresent() ? findObject(sourceObjects, catalog.key()) : null;
+        SchemaObject b = catalog.targetPresent() ? findObject(targetObjects, catalog.key()) : null;
+        return compareLoadedObject(catalog.key(), a, b);
+    }
+
+    private static DiffEngine.Result compareLoadedObject(SchemaObject.Key key, SchemaObject source, SchemaObject target) {
+        return new DiffEngine().compare(source == null ? List.of() : List.of(source), target == null ? List.of() : List.of(target),
+                EnumSet.of(key.kind()), Set.of(key)).get(0);
+    }
+
+    private static SchemaObject findObject(List<SchemaObject> objects, SchemaObject.Key key) {
+        return objects.stream().filter(object -> object.key().equals(key)).findFirst().orElse(null);
+    }
+
+    private boolean isSelected(SchemaObject.Key key) {
+        Object selected = resultList.getSelectedValue();
+        return selected != null && objectKey(selected).equals(key);
+    }
+
+    private static String rowSummary(RowDiff.Result rows) {
+        return "Filas revisadas · " + rows.matchedRows() + " claves coincidentes · " + rows.sourceOnly()
+                + " solo en origen · " + rows.targetOnly() + " solo en destino · " + rows.different() + " diferentes"
+                + (rows.truncated() ? " · resultados limitados" : "");
+    }
+
+    private static String errorMessage(Exception ex) { return ex.getMessage() == null ? ex.toString() : ex.getMessage(); }
 
     private void saveRowSql(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes) {
         JTextArea preview = area(); preview.setText(RowSqlExporter.export(rows, inserts, updates, deletes)); preview.setCaretPosition(0);
