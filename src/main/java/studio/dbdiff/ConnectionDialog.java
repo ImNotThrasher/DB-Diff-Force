@@ -25,6 +25,7 @@ final class ConnectionDialog extends JDialog {
     }
     private final JTextField[][] fields = new JTextField[2][3];
     private final JPasswordField[] passwords = {new JPasswordField(15), new JPasswordField(15)};
+    private final JCheckBox[] rememberPasswords = {new JCheckBox("Recordar contraseña en este equipo"), new JCheckBox("Recordar contraseña en este equipo")};
     private final JCheckBox[] tls = {new JCheckBox("Use TLS and verify server certificate"), new JCheckBox("Use TLS and verify server certificate")};
     private final JComboBox<DatabaseEngine> engine = new JComboBox<>(DatabaseEngine.values());
     private final List<JComboBox<String>> databases = List.of(new JComboBox<>(), new JComboBox<>());
@@ -69,10 +70,11 @@ final class ConnectionDialog extends JDialog {
             JComboBox<String> database = databases.get(side); database.setEnabled(false); database.setPrototypeDisplayValue("Elegí una base de datos"); form.add(database, c);
             c.gridy = 7; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Contraseña"), c);
             c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; passwords[side].setEchoChar('•'); form.add(passwords[side], c);
-            c.gridy = 8; c.gridx = side * 2; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(tls[side], c);
+            c.gridy = 8; c.gridx = side * 2; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(rememberPasswords[side], c);
+            c.gridy = 9; form.add(tls[side], c);
             testButtons[side] = new JButton("Probar conexión"); testStatus[side] = new JLabel("Sin probar"); testStatus[side].setForeground(new Color(105, 118, 136));
             JPanel testRow = new JPanel(new BorderLayout(8, 0)); testRow.add(testButtons[side], BorderLayout.WEST); testRow.add(testStatus[side], BorderLayout.CENTER);
-            c.gridy = 9; c.gridx = side * 2; c.gridwidth = 2; form.add(testRow, c);
+            c.gridy = 10; c.gridx = side * 2; c.gridwidth = 2; form.add(testRow, c);
             final int endpointIndex = side; testButtons[side].addActionListener(e -> testConnection(endpointIndex));
             savedChoice.addActionListener(e -> {
                 String name = (String) savedChoice.getSelectedItem();
@@ -83,7 +85,7 @@ final class ConnectionDialog extends JDialog {
             deleteProfile.addActionListener(e -> deleteProfile(endpointIndex));
             observeChanges(side);
         }
-        JLabel secure = new JLabel("Las contraseñas nunca se guardan; los perfiles conservan servidor, base, usuario y TLS. Se recomienda TLS para conexiones remotas."); secure.setBorder(new EmptyBorder(0, 20, 0, 20));
+        JLabel secure = new JLabel("La contraseña solo se guarda si activás la opción; se usa el almacén seguro del sistema operativo."); secure.setBorder(new EmptyBorder(0, 20, 0, 20));
         JButton cancel = new JButton("Cancelar"), connect = actionButton("Conectar", true); JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT)); buttons.add(cancel); buttons.add(connect);
         cancel.addActionListener(e -> { autoConnectRequested = false; dispose(); }); connect.addActionListener(e -> requestConnect()); add(form, BorderLayout.CENTER); add(secure, BorderLayout.NORTH); add(buttons, BorderLayout.SOUTH); pack(); setLocationRelativeTo(owner);
     }
@@ -100,7 +102,17 @@ final class ConnectionDialog extends JDialog {
         if (profile == null) return;
         engine.setSelectedItem(profile.engine());
         fields[side][0].setText(profile.host()); fields[side][1].setText(Integer.toString(profile.port())); fields[side][2].setText(profile.user());
-        passwords[side].setText(""); tls[side].setSelected(profile.useTls());
+        passwords[side].setText(""); tls[side].setSelected(profile.useTls()); rememberPasswords[side].setSelected(profile.rememberPassword());
+        if (profile.rememberPassword()) {
+            try {
+                char[] stored = ConnectionCredentialStore.load(profile.name());
+                try { passwords[side].setText(new String(stored)); }
+                finally { Arrays.fill(stored, '\0'); }
+            } catch (Exception ex) {
+                rememberPasswords[side].setSelected(false);
+                JOptionPane.showMessageDialog(this, "No se pudo recuperar la contraseña guardada. Ingresala nuevamente.\n" + ex.getMessage(), "Contraseña no disponible", JOptionPane.WARNING_MESSAGE);
+            }
+        }
         updatingDatabaseChoice[side] = true; databases.get(side).removeAllItems(); databases.get(side).setEnabled(false); updatingDatabaseChoice[side] = false;
         preferredDatabase[side] = profile.database(); invalidateTest(side);
     }
@@ -114,14 +126,22 @@ final class ConnectionDialog extends JDialog {
         String initialName = selectedName.isBlank() ? fields[side][0].getText().trim() + " / " + databases.get(side).getSelectedItem() : selectedName;
         String name = JOptionPane.showInputDialog(this, "Nombre del perfil de conexión:", initialName);
         if (name == null || name.isBlank()) return;
+        char[] password = passwords[side].getPassword();
         try {
+            ConnectionProfile previous = savedProfiles.get(name.trim());
             ConnectionProfile profile = new ConnectionProfile(name.trim(), (DatabaseEngine) engine.getSelectedItem(),
                     fields[side][0].getText().trim(), Integer.parseInt(fields[side][1].getText().trim()),
-                    (String) databases.get(side).getSelectedItem(), fields[side][2].getText().trim(), tls[side].isSelected());
-            ConnectionProfiles.save(profile); savedProfiles.put(profile.name(), profile); refreshSavedChoices(side, profile.name());
-        } catch (IOException | RuntimeException ex) {
+                    (String) databases.get(side).getSelectedItem(), fields[side][2].getText().trim(), tls[side].isSelected(), false);
+            ConnectionProfiles.save(profile);
+            if (rememberPasswords[side].isSelected()) {
+                ConnectionCredentialStore.save(profile.name(), password);
+                profile = new ConnectionProfile(profile.name(), profile.engine(), profile.host(), profile.port(), profile.database(), profile.user(), profile.useTls(), true);
+                ConnectionProfiles.save(profile);
+            } else if (previous != null && previous.rememberPassword()) ConnectionCredentialStore.delete(profile.name());
+            savedProfiles.put(profile.name(), profile); refreshSavedChoices(side, profile.name());
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "No se pudo guardar el perfil: " + ex.getMessage(), "Error al guardar", JOptionPane.ERROR_MESSAGE);
-        }
+        } finally { Arrays.fill(password, '\0'); }
     }
 
     private void deleteProfile(int side) {
@@ -130,8 +150,11 @@ final class ConnectionDialog extends JDialog {
             JOptionPane.showMessageDialog(this, "Elegí un perfil guardado para eliminar.", "No hay un perfil seleccionado", JOptionPane.INFORMATION_MESSAGE); return;
         }
         if (JOptionPane.showConfirmDialog(this, "¿Eliminar el perfil de conexión '" + name + "'?", "Eliminar perfil", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
-        try { ConnectionProfiles.remove(name); savedProfiles.remove(name); refreshSavedChoices(side, null); }
-        catch (IOException ex) { JOptionPane.showMessageDialog(this, "No se pudo eliminar el perfil: " + ex.getMessage(), "Error al eliminar", JOptionPane.ERROR_MESSAGE); }
+        try {
+            ConnectionProfile profile = savedProfiles.get(name);
+            if (profile != null && profile.rememberPassword()) ConnectionCredentialStore.delete(name);
+            ConnectionProfiles.remove(name); savedProfiles.remove(name); refreshSavedChoices(side, null);
+        } catch (Exception ex) { JOptionPane.showMessageDialog(this, "No se pudo eliminar el perfil: " + ex.getMessage(), "Error al eliminar", JOptionPane.ERROR_MESSAGE); }
     }
 
     private void observeChanges(int side) {

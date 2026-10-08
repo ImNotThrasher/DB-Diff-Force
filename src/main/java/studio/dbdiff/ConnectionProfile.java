@@ -1,8 +1,13 @@
 package studio.dbdiff;
 
-/** A reusable endpoint configuration. Passwords are deliberately not persisted. */
+/** A reusable endpoint configuration. Passwords live in the OS credential store. */
 public record ConnectionProfile(String name, DatabaseEngine engine, String host, int port,
-                                String database, String user, boolean useTls) {
+                                String database, String user, boolean useTls, boolean rememberPassword) {
+    public ConnectionProfile(String name, DatabaseEngine engine, String host, int port,
+                             String database, String user, boolean useTls) {
+        this(name, engine, host, port, database, user, useTls, false);
+    }
+
     public ConnectionProfile {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Profile name is required");
         if (engine == null) throw new IllegalArgumentException("Database engine is required");

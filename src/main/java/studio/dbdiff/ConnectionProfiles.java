@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
 
-/** Loads and saves endpoint profiles without storing passwords. */
+/** Loads and saves endpoint metadata; passwords are stored separately in the OS credential store. */
 public final class ConnectionProfiles {
     private static final String PREFIX = "connection.";
     private ConnectionProfiles() { }
@@ -30,7 +30,8 @@ public final class ConnectionProfiles {
                         Integer.parseInt(properties.getProperty(base + ".port")),
                         properties.getProperty(base + ".database"),
                         properties.getProperty(base + ".user"),
-                        Boolean.parseBoolean(properties.getProperty(base + ".tls"))));
+                        Boolean.parseBoolean(properties.getProperty(base + ".tls")),
+                        Boolean.parseBoolean(properties.getProperty(base + ".rememberPassword"))));
             } catch (RuntimeException ignored) {
                 // Skip malformed entries and keep the remaining saved profiles usable.
             }
@@ -70,9 +71,10 @@ public final class ConnectionProfiles {
             properties.setProperty(key + ".database", profile.database());
             properties.setProperty(key + ".user", profile.user());
             properties.setProperty(key + ".tls", Boolean.toString(profile.useTls()));
+            properties.setProperty(key + ".rememberPassword", Boolean.toString(profile.rememberPassword()));
         }
         Path file = file(); Files.createDirectories(file.getParent());
-        try (OutputStream output = Files.newOutputStream(file)) { properties.store(output, AppInfo.NAME + " connection profiles. Passwords are not stored."); }
+        try (OutputStream output = Files.newOutputStream(file)) { properties.store(output, AppInfo.NAME + " connection profiles. Passwords are stored in the OS credential store when enabled."); }
     }
 
     private static Path file() { return Path.of(System.getProperty("user.home"), ".db-diff-studio", "connections.properties"); }
