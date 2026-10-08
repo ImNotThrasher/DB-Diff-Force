@@ -36,7 +36,7 @@ final class RowComparisonPanel extends JPanel {
     record ExportOptions(boolean inserts, boolean updates, boolean deletes) { }
 
     private final JToggleButton disclosure = new JToggleButton("Comparación de filas");
-    private final JLabel summary = new JLabel("Seleccioná una tabla comparada y elegí Comparar filas.");
+    private final JLabel summary = new JLabel("Desplegá este panel para comparar las filas de la tabla seleccionada.");
     private final JPanel body = new JPanel(new BorderLayout(0, 7));
     private final JPanel resultContent = new JPanel(new BorderLayout(0, 5));
     private final JCheckBox inserts = new JCheckBox("INSERT: filas solo en origen", true);
@@ -74,14 +74,14 @@ final class RowComparisonPanel extends JPanel {
             expandedHandler.accept(disclosure.isSelected());
         });
         header.add(disclosure, BorderLayout.WEST);
-        header.add(summary, BorderLayout.CENTER);
+        header.add(summary, BorderLayout.SOUTH);
         add(header, BorderLayout.NORTH);
 
         JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         options.setOpaque(false);
         options.add(inserts); options.add(updates); options.add(deletes);
         export.setIcon(UiIcons.themed(UiIcons.EXPORT, 14)); export.setIconTextGap(5);
-        export.setToolTipText("Revisar y guardar SQL para las filas filtradas por las operaciones seleccionadas.");
+        export.setToolTipText("Generar SQL hacia destino según las operaciones marcadas. La búsqueda y las solapas no limitan la exportación. No ejecuta cambios.");
         export.setEnabled(false);
         export.addActionListener(event -> {
             if (result == null) return;
@@ -94,7 +94,7 @@ final class RowComparisonPanel extends JPanel {
             }
         });
         JPanel actions = new JPanel(new BorderLayout(8, 0));
-        actions.setOpaque(false); actions.add(options, BorderLayout.CENTER); actions.add(export, BorderLayout.EAST);
+        actions.setOpaque(false); actions.add(options, BorderLayout.CENTER); actions.add(export, BorderLayout.SOUTH);
         body.add(resultContent, BorderLayout.CENTER); body.add(actions, BorderLayout.SOUTH);
         body.setPreferredSize(new Dimension(100, 285));
         body.setBorder(new EmptyBorder(2, 4, 2, 4));
@@ -116,7 +116,8 @@ final class RowComparisonPanel extends JPanel {
         summary.setText(result.table().name() + " · " + result.matchedRows() + " claves coincidentes · "
                 + result.sourceOnly() + " solo en origen · " + result.targetOnly() + " solo en destino · "
                 + result.different() + " modificadas · PK: " + primaryKey);
-        export.setEnabled(!result.changes().isEmpty());
+        summary.setToolTipText(summary.getText());
+        export.setEnabled(additions + removals + modifications > 0);
         resultContent.removeAll();
 
         if (result.changes().isEmpty()) {
@@ -128,26 +129,26 @@ final class RowComparisonPanel extends JPanel {
             empty.setForeground(ThemePalette.forMode(dark).foreground());
             resultContent.add(empty, BorderLayout.CENTER);
         } else {
-            JPanel toolbar = new JPanel(new BorderLayout(8, 0)); toolbar.setOpaque(false);
+            JPanel toolbar = new JPanel(new BorderLayout(8, 6)); toolbar.setOpaque(false);
             JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0)); filters.setOpaque(false);
             ButtonGroup group = new ButtonGroup();
             addFilter(filters, group, "Todas", null, result.changes().size(), "Mostrar todas las filas comparadas, incluidas las idénticas.");
             addFilter(filters, group, "Iguales", RowDiff.Status.IDENTICAL, identical, "Filas idénticas en origen y destino.");
-            addFilter(filters, group, "Agregadas", RowDiff.Status.SOURCE_ONLY, additions, "Solo en origen; exportar como INSERT hacia destino.");
-            addFilter(filters, group, "Quitadas", RowDiff.Status.TARGET_ONLY, removals, "Solo en destino; exportar como DELETE para igualar con origen.");
+            addFilter(filters, group, "Solo origen", RowDiff.Status.SOURCE_ONLY, additions, "Solo en origen; exportar como INSERT hacia destino.");
+            addFilter(filters, group, "Solo destino", RowDiff.Status.TARGET_ONLY, removals, "Solo en destino; exportar como DELETE para igualar con origen.");
             addFilter(filters, group, "Modificadas", RowDiff.Status.DIFFERENT, modifications, "Presentes en ambos lados con valores distintos.");
             JPanel search = new JPanel(new BorderLayout(5, 0)); search.setOpaque(false);
             searchIcon = new JLabel(UiIcons.themed(UiIcons.SEARCH, 14));
             searchIcon.setForeground(ThemePalette.forMode(dark).foreground());
             search.add(searchIcon, BorderLayout.WEST);
-            searchField = new JTextField(16); searchField.setToolTipText("Buscar en estado, clave y diferencias");
+            searchField = new PlaceholderTextField("Buscar en todas las columnas…"); searchField.setToolTipText("Filtrar las filas visibles por cualquier valor");
             searchField.setBackground(ThemePalette.forMode(dark).editor());
             searchField.setForeground(ThemePalette.forMode(dark).foreground());
             searchField.setCaretColor(ThemePalette.forMode(dark).foreground());
             searchField.setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(ThemePalette.forMode(dark).border()), new EmptyBorder(3, 6, 3, 6)));
             search.add(searchField, BorderLayout.CENTER);
-            toolbar.add(filters, BorderLayout.WEST); toolbar.add(search, BorderLayout.EAST);
+            toolbar.add(filters, BorderLayout.NORTH); toolbar.add(search, BorderLayout.CENTER);
             resultContent.add(toolbar, BorderLayout.NORTH);
 
             String[] headers = new String[result.columns().size() + 1];
@@ -198,7 +199,7 @@ final class RowComparisonPanel extends JPanel {
         }
 
         if (result.truncated()) {
-            JLabel warning = new JLabel("Resultados limitados a las primeras filas modificadas.");
+            JLabel warning = new JLabel("Resultados limitados: no se muestran todas las filas comparadas.");
             warning.setForeground(dark ? new Color(230, 174, 85) : new Color(155, 79, 21));
             resultContent.add(warning, BorderLayout.SOUTH);
         }

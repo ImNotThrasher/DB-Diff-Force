@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 final class ConnectionDialog extends JDialog {
     enum SourceMode {
-        DATABASE("Base de datos"), SNAPSHOT("Snapshot SQL"), FLYWAY("Migraciones Flyway");
+        DATABASE("Base de datos"), SNAPSHOT("Archivos SQL (CREATE)"), FLYWAY("Migraciones Flyway");
         private final String label;
         SourceMode(String label) { this.label = label; }
         @Override public String toString() { return label; }
@@ -168,8 +168,8 @@ final class ConnectionDialog extends JDialog {
         } else {
             testButtons[0].setEnabled(true);
         }
-        connectButton.setText(databaseOrigin ? "Conectar bases" : "Conectar destino y cargar origen");
-        setTitle(databaseOrigin ? "Conectar bases" : "Conectar base destino");
+        connectButton.setText("Iniciar comparación");
+        setTitle("Nueva comparación");
         revalidate(); pack(); setMinimumSize(new Dimension(850, 480));
     }
 

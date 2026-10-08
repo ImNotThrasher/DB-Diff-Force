@@ -18,6 +18,9 @@ import java.util.List;
 public final class ComparisonView extends JPanel {
     private static final String SPLIT = "split";
     private static final String UNIFIED = "unified";
+    private static final String EMPTY = "empty";
+    private String selectedMode = SPLIT;
+    private final JTextArea emptyMessage = new JTextArea();
     private final JLabel databasePair = new JLabel("Base origen  →  Base destino");
     private final JTextArea summary = new JTextArea();
     private final DiffCodeEditor source = new DiffCodeEditor(false, true);
@@ -42,6 +45,11 @@ public final class ComparisonView extends JPanel {
         unifiedHeading.setFont(new Font("Segoe UI", Font.BOLD, 11)); unifiedHeading.setBorder(new EmptyBorder(0, 0, 6, 0));
         unifiedPanel.add(unifiedHeading, BorderLayout.NORTH); unifiedPanel.add(unified, BorderLayout.CENTER);
         cards.add(unifiedPanel, UNIFIED);
+        emptyMessage.setEditable(false);
+        emptyMessage.setLineWrap(true);
+        emptyMessage.setWrapStyleWord(true);
+        emptyMessage.setBorder(new EmptyBorder(24, 24, 24, 24));
+        cards.add(emptyMessage, EMPTY);
         add(cards, BorderLayout.CENTER);
         showMode(SPLIT);
         syncVerticalScroll(source, target);
@@ -66,6 +74,7 @@ public final class ComparisonView extends JPanel {
         Color panel = palette.panel();
         Color foreground = palette.foreground();
         setBackground(panel); cards.setBackground(panel);
+        emptyMessage.setBackground(panel); emptyMessage.setForeground(foreground);
         databasePair.setForeground(foreground); summary.setForeground(foreground);
         sourceHeading.setForeground(foreground); targetHeading.setForeground(foreground); unifiedHeading.setForeground(foreground);
         for (DiffCodeEditor editor : List.of(source, target, unified)) editor.setThemeColors(dark);
@@ -82,13 +91,15 @@ public final class ComparisonView extends JPanel {
 
     public void showMessage(String text) {
         current = null;
-        summary.setText(text);
+        summary.setText("Comparación de esquema");
+        emptyMessage.setText(text == null || text.isBlank() ? "Seleccioná un objeto de la lista para ver su definición y sus diferencias." : text);
         source.clear(); target.clear(); unified.clear();
-        showMode(SPLIT);
+        ((CardLayout) cards.getLayout()).show(cards, EMPTY);
     }
 
     public void showResult(DiffEngine.Result result, boolean dark) {
         current = result; this.dark = dark;
+        showMode(selectedMode);
         summary.setText(result.key() + "   ·   Estado: " + statusName(result.status()));
         String left = result.source() == null ? "El objeto no existe en el origen." : result.source().definition();
         String right = result.target() == null ? "El objeto no existe en el destino." : result.target().definition();
@@ -114,13 +125,17 @@ public final class ComparisonView extends JPanel {
         ButtonGroup modes = new ButtonGroup(); modes.add(splitModeButton); modes.add(unifiedModeButton); splitModeButton.setSelected(true);
         splitModeButton.addActionListener(e -> showMode(SPLIT)); unifiedModeButton.addActionListener(e -> showMode(UNIFIED));
         JPanel choices = new JPanel(); choices.setOpaque(false); choices.add(splitModeButton); choices.add(unifiedModeButton);
-        panel.setBorder(new EmptyBorder(2, 4, 4, 4)); panel.add(labels, BorderLayout.CENTER); panel.add(choices, BorderLayout.EAST);
+        panel.setBorder(new EmptyBorder(2, 4, 4, 4)); panel.add(labels, BorderLayout.CENTER); panel.add(choices, BorderLayout.SOUTH);
         return panel;
     }
 
     private void showMode(String mode) {
-        ((CardLayout) cards.getLayout()).show(cards, mode);
+        // Preserve the preferred view while messages temporarily replace the editors.
+        selectedMode = mode;
+        ((CardLayout) cards.getLayout()).show(cards, current == null ? EMPTY : mode);
         if (splitModeButton != null) {
+            splitModeButton.setSelected(SPLIT.equals(mode));
+            unifiedModeButton.setSelected(UNIFIED.equals(mode));
             AppTheme.styleToggleButton(splitModeButton, dark);
             AppTheme.styleToggleButton(unifiedModeButton, dark);
         }

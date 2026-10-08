@@ -131,7 +131,7 @@ public final class Main {
         frame.setMinimumSize(new Dimension(1020, 680)); frame.setSize(1260, 820); frame.setLocationRelativeTo(null);
         frame.setLayout(new BorderLayout(0, 0)); frame.add(header(), BorderLayout.NORTH); frame.add(content(), BorderLayout.CENTER); frame.add(statusBar(), BorderLayout.SOUTH);
         setConnectionAvailable(false);
-        comparisonView.showMessage("Conectá dos bases para empezar a comparar.");
+        comparisonView.showMessage("Elegí Nueva comparación para configurar el origen y la base destino. La comparación del esquema comienza automáticamente.");
         applyTheme(); frame.setVisible(true);
         SwingUtilities.invokeLater(() -> {
             comparisonSplit.setDividerLocation(.89);
@@ -525,6 +525,11 @@ public final class Main {
         } finally {
             updatingResultItems = false;
         }
+        // A hidden selection must not leave an unrelated definition or row result on screen.
+        if (!selected.equals(resultList.getSelectedValuesList()))
+            selectResult(new ListSelectionEvent(resultList, 0, resultModel.size(), false));
+        if (resultModel.isEmpty())
+            comparisonView.showMessage("No hay objetos que coincidan con los filtros. Cambiá la búsqueda o los tipos seleccionados.");
     }
 
     private void sortObjectItems(List<Object> items) {
@@ -580,10 +585,10 @@ public final class Main {
         selectedSchemaResult = null;
         rowComparisonPanel.clearResult(false);
         if (resultList.getSelectedValuesList().size() > 1) setRowComparisonVisible(false);
-        if (resultList.getSelectedValuesList().size() > 1) { setBusy(false, "Varios objetos seleccionados"); comparisonView.showMessage("Seleccionaste varios objetos. Elegí Comparar para analizarlos o seleccioná un resultado para ver sus detalles."); if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("Seleccioná una sola tabla para comparar filas."); return; }
+        if (resultList.getSelectedValuesList().size() > 1) { setBusy(false, "Varios objetos seleccionados"); comparisonView.showMessage("Seleccionaste varios objetos. Usá Exportar SQL para preparar sus scripts o Actualizar para volver a leerlos. Seleccioná un solo objeto para ver su definición."); return; }
         Object item = resultList.getSelectedValue();
         if (item != null) setBusy(false, "Objeto seleccionado · " + objectKey(item).qualifiedName());
-        if (item == null) setRowComparisonVisible(false);
+        if (item == null) { setRowComparisonVisible(false); comparisonView.showMessage(""); }
         if (item instanceof CatalogItem catalog) { setRowComparisonVisible(catalog.key().kind() == SchemaObject.Kind.TABLE); loadCatalogSelection(catalog, request); return; }
         if (!(item instanceof DiffEngine.Result selected)) return;
         setRowComparisonVisible(selected.key().kind() == SchemaObject.Kind.TABLE);
