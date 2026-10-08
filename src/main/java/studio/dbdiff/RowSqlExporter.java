@@ -43,6 +43,8 @@ public final class RowSqlExporter {
     private static String literal(Object value, String type) {
         if (value == null) return "NULL";
         if (Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "float", "double", "real", "year").contains(type)) {
+            // MariaDB/JDBC can expose TINYINT(1) as Boolean; SQL still expects 0/1.
+            if (value instanceof Boolean bool) return bool ? "1" : "0";
             try { return new BigDecimal(value.toString()).toPlainString(); } catch (NumberFormatException ex) { throw new IllegalArgumentException("Unsafe numeric value for " + type, ex); }
         }
         if (Set.of("char", "varchar", "tinytext", "text", "mediumtext", "longtext", "enum", "set").contains(type)) {

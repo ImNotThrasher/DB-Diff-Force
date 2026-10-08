@@ -55,6 +55,11 @@ final class RowComparisonPanel extends JPanel {
     private RowDiff.Status activeFilter;
     private boolean dark;
 
+    /** Cell presentation keeps source and destination values available to filters and tooltips. */
+    private record FieldValue(String text, String tooltip, boolean different) {
+        @Override public String toString() { return text; }
+    }
+
     RowComparisonPanel(BiConsumer<RowDiff.Result, ExportOptions> exportHandler, Consumer<Boolean> expandedHandler) {
         super(new BorderLayout(0, 4));
         this.exportHandler = exportHandler;
@@ -143,13 +148,16 @@ final class RowComparisonPanel extends JPanel {
             toolbar.add(filters, BorderLayout.WEST); toolbar.add(search, BorderLayout.EAST);
             resultContent.add(toolbar, BorderLayout.NORTH);
 
-            String[] headers = {"Estado", "Clave primaria", "Diferencias por campo"};
+            String[] headers = new String[result.columns().size() + 1];
+            headers[0] = "Estado";
+            for (int column = 0; column < result.columns().size(); column++)
+                headers[column + 1] = result.columns().get(column).name();
             Object[][] data = new Object[result.changes().size()][headers.length];
             for (int i = 0; i < result.changes().size(); i++) {
                 RowDiff.RowChange change = result.changes().get(i);
                 data[i][0] = statusLabel(change.status());
-                data[i][1] = keyText(change.key());
-                data[i][2] = changeDetails(result.columns(), change);
+                for (int column = 0; column < result.columns().size(); column++)
+                    data[i][column + 1] = fieldValue(result.columns().get(column), change);
             }
             DefaultTableModel model = new DefaultTableModel(data, headers) {
                 @Override public boolean isCellEditable(int row, int column) { return false; }
@@ -157,20 +165,24 @@ final class RowComparisonPanel extends JPanel {
             changesTable = new JTable(model) {
                 @Override public String getToolTipText(MouseEvent event) {
                     int row = rowAtPoint(event.getPoint());
-                    if (row < 0) return null;
-                    return String.valueOf(getValueAt(row, 2));
+                    int column = columnAtPoint(event.getPoint());
+                    if (row < 0 || column < 0) return null;
+                    Object value = getValueAt(row, column);
+                    if (value instanceof FieldValue field) return field.tooltip();
+                    return "Estado de la fila";
                 }
             };
             changesTable.setToolTipText("");
             changesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-            changesTable.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
+            changesTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
             changesTable.setFillsViewportHeight(true);
             changesTable.setRowHeight(46);
-            changesTable.getColumnModel().getColumn(0).setPreferredWidth(140);
-            changesTable.getColumnModel().getColumn(1).setPreferredWidth(220);
-            changesTable.getColumnModel().getColumn(2).setPreferredWidth(620);
+            changesTable.getColumnModel().getColumn(0).setPreferredWidth(165);
+            for (int column = 1; column < headers.length; column++)
+                changesTable.getColumnModel().getColumn(column).setPreferredWidth(180);
             changesTable.getColumnModel().getColumn(0).setCellRenderer(new StatusCellRenderer(dark));
-            changesTable.getColumnModel().getColumn(2).setCellRenderer(new DetailCellRenderer());
+            for (int column = 1; column < headers.length; column++)
+                changesTable.getColumnModel().getColumn(column).setCellRenderer(new FieldCellRenderer(dark));
             sorter = new TableRowSorter<>(model); changesTable.setRowSorter(sorter);
             searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
                 @Override public void insertUpdate(javax.swing.event.DocumentEvent event) { applyFilter(); }
@@ -259,6 +271,8 @@ final class RowComparisonPanel extends JPanel {
                 palette.border()), new EmptyBorder(5, 0, 0, 0)));
         if (changesTable != null) {
             changesTable.getColumnModel().getColumn(0).setCellRenderer(new StatusCellRenderer(dark));
+            for (int column = 1; column < changesTable.getColumnModel().getColumnCount(); column++)
+                changesTable.getColumnModel().getColumn(column).setCellRenderer(new FieldCellRenderer(dark));
             applyTableTheme(changesTable);
         }
     }
@@ -312,26 +326,29 @@ final class RowComparisonPanel extends JPanel {
         };
     }
 
-    private static String changeDetails(List<RowDiff.Column> columns, RowDiff.RowChange change) {
-        return columns.stream()
-                .filter(column -> change.status() != RowDiff.Status.DIFFERENT
-                        || !Objects.deepEquals(change.source().get(column.name()), change.target().get(column.name())))
-                .map(column -> column.name() + ": origen=" + rowValue(change.source(), column.name())
-                        + " → destino=" + rowValue(change.target(), column.name()))
-                .collect(Collectors.joining("; "));
+    private static FieldValue fieldValue(RowDiff.Column column, RowDiff.RowChange change) {
+        String source = rowValue(change.source(), column.name());
+        String target = rowValue(change.target(), column.name());
+        return switch (change.status()) {
+            case SOURCE_ONLY -> new FieldValue(source, "Presente en origen: " + source + "\nFalta en destino.", false);
+            case TARGET_ONLY -> new FieldValue(target, "Falta en origen.\nPresente en destino: " + target, false);
+            case DIFFERENT -> {
+                boolean different = !Objects.deepEquals(change.source().get(column.name()), change.target().get(column.name()));
+                yield different
+                        ? new FieldValue("O: " + source + " → D: " + target, "Origen: " + source + "\nDestino: " + target, true)
+                        : new FieldValue(source, "Igual en origen y destino: " + source, false);
+            }
+        };
     }
 
     private static String rowValue(Map<String, Object> row, String column) {
         return row.containsKey(column) ? displayValue(row.get(column)) : "(sin registro)";
     }
 
-    private static String keyText(Map<String, Object> key) {
-        return key.entrySet().stream().map(entry -> entry.getKey() + " = " + displayValue(entry.getValue()))
-                .collect(Collectors.joining(", "));
-    }
-
     private static String displayValue(Object value) {
         if (value == null) return "NULL";
+        // MariaDB drivers may expose TINYINT(1) columns as Boolean values.
+        if (value instanceof Boolean bool) return bool ? "1" : "0";
         if (value instanceof byte[] bytes) return "0x" + java.util.HexFormat.of().formatHex(bytes);
         String text = value.toString();
         return text.length() > 512 ? text.substring(0, 509) + "…" : text;
@@ -339,13 +356,23 @@ final class RowComparisonPanel extends JPanel {
 
     private static String errorMessage(Exception ex) { return ex.getMessage() == null ? ex.toString() : ex.getMessage(); }
 
-    private static final class DetailCellRenderer extends javax.swing.JTextArea implements javax.swing.table.TableCellRenderer {
-        DetailCellRenderer() { setLineWrap(true); setWrapStyleWord(true); setOpaque(true); setBorder(new EmptyBorder(3, 6, 3, 6)); }
+    private static final class FieldCellRenderer extends javax.swing.JTextArea implements javax.swing.table.TableCellRenderer {
+        private final boolean dark;
+        FieldCellRenderer(boolean dark) { this.dark = dark; setLineWrap(true); setWrapStyleWord(true); setOpaque(true); setBorder(new EmptyBorder(3, 6, 3, 6)); }
         @Override public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
                                                                   boolean focus, int row, int column) {
-            setText(String.valueOf(value)); setFont(table.getFont());
+            FieldValue field = value instanceof FieldValue cell ? cell : new FieldValue(String.valueOf(value), "", false);
+            setText(field.text()); setFont(table.getFont());
             setForeground(selected ? table.getSelectionForeground() : table.getForeground());
-            setBackground(selected ? table.getSelectionBackground() : table.getBackground());
+            if (selected) setBackground(table.getSelectionBackground());
+            else {
+                int modelRow = table.convertRowIndexToModel(row);
+                String status = String.valueOf(table.getModel().getValueAt(modelRow, 0));
+                if (status.startsWith("Agregada")) setBackground(dark ? new Color(35, 84, 66) : new Color(222, 246, 229));
+                else if (status.startsWith("Quitada")) setBackground(dark ? new Color(104, 48, 52) : new Color(255, 226, 226));
+                else if (field.different()) setBackground(dark ? new Color(91, 69, 34) : new Color(255, 241, 204));
+                else setBackground(table.getBackground());
+            }
             return this;
         }
     }
