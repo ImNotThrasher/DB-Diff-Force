@@ -20,16 +20,6 @@ import java.util.Set;
 
 /** JDBC connector for SQL Server catalogs, object definitions, and primary-key row diffs. */
 public final class SqlServerConnector implements DatabaseConnector {
-    private static final Set<String> SQL_KEYWORDS = Set.of("create", "alter", "procedure", "proc", "function", "view", "table",
-            "as", "begin", "end", "return", "returns", "select", "from", "where", "join", "inner", "left", "right",
-            "full", "outer", "on", "and", "or", "not", "null", "is", "in", "exists", "with", "distinct", "top",
-            "order", "by", "group", "having", "union", "all", "case", "when", "then", "else", "declare", "set",
-            "insert", "into", "values", "update", "delete", "exec", "execute", "transaction", "commit", "rollback",
-            "primary", "key", "foreign", "references", "constraint", "unique", "default", "identity", "clustered",
-            "nonclustered", "index", "include", "check", "collate", "asc", "desc", "go", "varchar", "nvarchar",
-            "char", "nchar", "int", "bigint", "smallint", "tinyint", "decimal", "numeric", "datetime", "datetime2",
-            "bit", "float", "real", "xml", "text", "ntext", "image", "max", "nulls", "offset", "fetch", "next",
-            "throw", "try", "catch", "if", "while", "cursor", "open", "close", "deallocate", "nocount");
     private Connection connection;
     private String database;
 
@@ -468,41 +458,8 @@ public final class SqlServerConnector implements DatabaseConnector {
 
     private static String normalizeLines(String text) { return text.replace("\r\n", "\n").replace('\r', '\n').lines().map(String::stripTrailing).collect(java.util.stream.Collectors.joining("\n")).strip(); }
     private static String canonicalSql(String text) {
-        StringBuilder result = new StringBuilder(text.length());
-        char quote = 0;
-        boolean pendingSpace = false;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (quote != 0) {
-                result.append(c);
-                if (c == quote) {
-                    if (i + 1 < text.length() && text.charAt(i + 1) == quote) result.append(text.charAt(++i));
-                    else quote = 0;
-                }
-            } else if (c == '\'' || c == '"' || c == '[') {
-                if (pendingSpace && !result.isEmpty() && result.charAt(result.length() - 1) != ' ') result.append(' ');
-                pendingSpace = false;
-                quote = c == '[' ? ']' : c;
-                result.append(c);
-            } else if (Character.isLetter(c) || c == '_') {
-                int end = i + 1;
-                while (end < text.length() && (Character.isLetterOrDigit(text.charAt(end)) || text.charAt(end) == '_' || text.charAt(end) == '$')) end++;
-                if (pendingSpace && !result.isEmpty() && !isCanonicalPunctuation(result.charAt(result.length() - 1))) result.append(' ');
-                String word = text.substring(i, end);
-                result.append(SQL_KEYWORDS.contains(word.toLowerCase(Locale.ROOT)) ? word.toUpperCase(Locale.ROOT) : word);
-                pendingSpace = false;
-                i = end - 1;
-            } else if (Character.isWhitespace(c)) pendingSpace = true;
-            else {
-                if (pendingSpace && !result.isEmpty() && result.charAt(result.length() - 1) != ' ' && !",().;".contains(String.valueOf(c))) result.append(' ');
-                pendingSpace = false;
-                result.append(c);
-            }
-        }
-        return result.toString().strip();
+        return SqlDefinitionCanonicalizer.signature(text, SqlDefinitionCanonicalizer.Dialect.SQL_SERVER, false);
     }
-
-    private static boolean isCanonicalPunctuation(char c) { return c == '(' || c == ')' || c == ',' || c == '.' || c == ';'; }
     private static String qualified(SchemaObject.Key key) { return qualified(key.schema(), key.name()); }
     private static String qualified(String schema, String name) { return quote(schema) + "." + quote(name); }
     private static String qualified(String database, SchemaObject.Key key) { return quote(database) + "." + qualified(key); }
