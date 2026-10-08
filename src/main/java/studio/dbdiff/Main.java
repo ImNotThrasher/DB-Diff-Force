@@ -10,6 +10,7 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
+import java.awt.Image;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.event.MouseEvent;
@@ -108,6 +109,7 @@ public final class Main {
 
     private void show() {
         loadUiPreferences();
+        frame.setIconImages(BrandMark.windowImages());
         frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         frame.addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) { close(); } });
         frame.setMinimumSize(new Dimension(1020, 680)); frame.setSize(1260, 820); frame.setLocationRelativeTo(null);
@@ -117,9 +119,13 @@ public final class Main {
 
     private JComponent header() {
         JPanel panel = new JPanel(new BorderLayout(16, 0)); headerPanel = panel; panel.putClientProperty("dbdiff.header", Boolean.TRUE); panel.setBackground(new Color(23, 36, 54)); panel.setBorder(new EmptyBorder(16, 22, 16, 20));
-        JPanel brand = new JPanel(); brand.setOpaque(false); brand.setLayout(new BoxLayout(brand, BoxLayout.Y_AXIS));
+        JPanel brand = new JPanel(new BorderLayout(12, 0)); brand.setOpaque(false);
+        JLabel logo = new JLabel(BrandMark.icon(46)); logo.setBorder(new EmptyBorder(0, 0, 0, 2));
         JLabel title = new JLabel(AppInfo.NAME); title.setForeground(Color.WHITE); title.setFont(new Font("Segoe UI", Font.BOLD, 21));
-        JLabel sub = new JLabel("Compará esquemas. Revisá los cambios. Exportá con seguridad."); sub.setForeground(new Color(184, 198, 216)); sub.setFont(new Font("Segoe UI", Font.PLAIN, 12)); brand.add(title); brand.add(Box.createVerticalStrut(3)); brand.add(sub);
+        JLabel sub = new JLabel("Compará esquemas. Revisá los cambios. Exportá con seguridad."); sub.setForeground(new Color(184, 198, 216)); sub.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        JPanel brandText = new JPanel(); brandText.setOpaque(false); brandText.setLayout(new BoxLayout(brandText, BoxLayout.Y_AXIS));
+        brandText.add(title); brandText.add(Box.createVerticalStrut(3)); brandText.add(sub);
+        brand.add(logo, BorderLayout.WEST); brand.add(brandText, BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4)); actions.setOpaque(false);
         JButton connect = button("Conectar bases", true); connect.setIcon(UiIcons.themed(UiIcons.CONNECT, 16)); connect.setIconTextGap(7); connect.putClientProperty("dbdiff.primary", Boolean.TRUE); connect.addActionListener(e -> connect());
         JButton compare = button("Comparar", false); compare.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compare.setIconTextGap(7); compare.addActionListener(e -> compare());

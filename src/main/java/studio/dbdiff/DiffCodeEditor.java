@@ -7,6 +7,7 @@ import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GraphicsEnvironment;
 import java.awt.RenderingHints;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Rectangle2D;
@@ -24,6 +25,7 @@ import javax.swing.text.StyledDocument;
 
 /** Code editor, line numbers, and change markers for one diff pane. */
 final class DiffCodeEditor extends JPanel {
+    private static final Font CODE_FONT = preferredCodeFont();
     private final boolean unifiedMode;
     private final boolean sourceSide;
     private final DiffTextPane text = new DiffTextPane();
@@ -73,6 +75,15 @@ final class DiffCodeEditor extends JPanel {
         };
     }
 
+    /** Prefer JetBrains Mono when installed; keep a readable system monospace fallback. */
+    private static Font preferredCodeFont() {
+        String[] installed = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
+        String family = java.util.Arrays.stream(installed).filter(name -> name.equalsIgnoreCase("JetBrains Mono")).findFirst()
+                .orElseGet(() -> java.util.Arrays.stream(installed).filter(name -> name.equalsIgnoreCase("Consolas")).findFirst()
+                        .orElse(Font.MONOSPACED));
+        return new Font(family, Font.PLAIN, 13);
+    }
+
     private static final class DiffTextPane extends JTextPane {
         private List<DiffEngine.DiffLine> rows = List.of();
         private boolean dark;
@@ -80,7 +91,7 @@ final class DiffCodeEditor extends JPanel {
         DiffTextPane() {
             setEditable(false);
             setOpaque(false);
-            setFont(new Font("Consolas", Font.PLAIN, 13));
+            setFont(CODE_FONT);
             setToolTipText("");
         }
 
