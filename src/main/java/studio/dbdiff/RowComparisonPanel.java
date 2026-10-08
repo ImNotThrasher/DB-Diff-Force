@@ -1,9 +1,8 @@
 package studio.dbdiff;
 
 import javax.swing.BorderFactory;
-import javax.swing.ButtonGroup;
+import javax.swing.JTabbedPane;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -39,16 +38,11 @@ final class RowComparisonPanel extends JPanel {
     private final JLabel summary = new JLabel("Desplegá este panel para comparar las filas de la tabla seleccionada.");
     private final JPanel body = new JPanel(new BorderLayout(0, 7));
     private final JPanel resultContent = new JPanel(new BorderLayout(0, 5));
-    private final JCheckBox inserts = new JCheckBox("INSERT: filas solo en origen", true);
-    private final JCheckBox updates = new JCheckBox("UPDATE: filas diferentes", true);
-    private final JCheckBox deletes = new JCheckBox("DELETE: filas solo en destino", false);
     private final JButton export = new JButton("Exportar SQL de filas…");
     private final BiConsumer<RowDiff.Result, ExportOptions> exportHandler;
     private final Consumer<Boolean> expandedHandler;
-    private final List<JToggleButton> filterButtons = new ArrayList<>();
     private JTable changesTable;
     private JTextField searchField;
-    private JLabel searchIcon;
     private JScrollPane changesScroll;
     private TableRowSorter<DefaultTableModel> sorter;
     private RowDiff.Result result;
@@ -77,16 +71,13 @@ final class RowComparisonPanel extends JPanel {
         header.add(summary, BorderLayout.SOUTH);
         add(header, BorderLayout.NORTH);
 
-        JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        options.setOpaque(false);
-        options.add(inserts); options.add(updates); options.add(deletes);
         export.setIcon(UiIcons.themed(UiIcons.EXPORT, 14)); export.setIconTextGap(5);
         export.setToolTipText("Generar SQL hacia destino según las operaciones marcadas. La búsqueda y las solapas no limitan la exportación. No ejecuta cambios.");
         export.setEnabled(false);
         export.addActionListener(event -> {
             if (result == null) return;
             try {
-                exportHandler.accept(result, new ExportOptions(inserts.isSelected(), updates.isSelected(), deletes.isSelected()));
+                exportHandler.accept(result, new ExportOptions(true, true, false));
             } catch (RuntimeException ex) {
                 javax.swing.JOptionPane.showMessageDialog(this,
                         "No se pudo preparar la exportación: " + AppUtils.errorMessage(ex), "Error al exportar filas",
@@ -94,29 +85,26 @@ final class RowComparisonPanel extends JPanel {
             }
         });
         JPanel actions = new JPanel(new BorderLayout(8, 0));
-        actions.setOpaque(false); actions.add(options, BorderLayout.CENTER); actions.add(export, BorderLayout.SOUTH);
+        actions.setOpaque(false); actions.add(export, BorderLayout.EAST);
         body.add(resultContent, BorderLayout.CENTER); body.add(actions, BorderLayout.SOUTH);
         body.setPreferredSize(new Dimension(100, 285));
         body.setBorder(new EmptyBorder(2, 4, 2, 4));
         body.setVisible(false);
         add(body, BorderLayout.CENTER);
-        setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
-                new Color(223, 228, 235)), new EmptyBorder(5, 0, 0, 0)));
+        setBorder(new EmptyBorder(6, 0, 0, 0));
         updateExpandedState();
     }
 
     void showResult(RowDiff.Result result) {
         this.result = result;
-        changesTable = null; searchField = null; searchIcon = null; changesScroll = null; sorter = null; filterButtons.clear(); activeFilter = null;
+        changesTable = null; searchField = null; changesScroll = null; sorter = null; activeFilter = null;
         long additions = result.changes().stream().filter(change -> change.status() == RowDiff.Status.SOURCE_ONLY).count();
         long removals = result.changes().stream().filter(change -> change.status() == RowDiff.Status.TARGET_ONLY).count();
         long modifications = result.changes().stream().filter(change -> change.status() == RowDiff.Status.DIFFERENT).count();
         long identical = result.changes().stream().filter(change -> change.status() == RowDiff.Status.IDENTICAL).count();
         String primaryKey = result.primaryKey().stream().map(RowDiff.Column::name).collect(Collectors.joining(", "));
-        summary.setText(result.table().name() + " · " + result.matchedRows() + " claves coincidentes · "
-                + result.sourceOnly() + " solo en origen · " + result.targetOnly() + " solo en destino · "
-                + result.different() + " modificadas · PK: " + primaryKey);
-        summary.setToolTipText(summary.getText());
+        summary.setText(result.table().name() + " · " + result.changes().size() + " filas · " + (additions + removals + modifications) + " con diferencias");
+        summary.setToolTipText("Clave primaria: " + primaryKey + " · " + result.matchedRows() + " claves coincidentes");
         export.setEnabled(additions + removals + modifications > 0);
         resultContent.removeAll();
 
@@ -125,28 +113,23 @@ final class RowComparisonPanel extends JPanel {
                     ? "Las dos tablas están vacías."
                     : "No se encontraron diferencias en las filas emparejadas.";
             JLabel empty = new JLabel(text, JLabel.CENTER);
-            empty.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            empty.setForeground(ThemePalette.forMode(dark).foreground());
+            empty.setFont(javax.swing.UIManager.getFont("Label.font"));
             resultContent.add(empty, BorderLayout.CENTER);
         } else {
             JPanel toolbar = new JPanel(new BorderLayout(8, 6)); toolbar.setOpaque(false);
-            JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0)); filters.setOpaque(false);
-            ButtonGroup group = new ButtonGroup();
-            addFilter(filters, group, "Todas", null, result.changes().size(), "Mostrar todas las filas comparadas, incluidas las idénticas.");
-            addFilter(filters, group, "Iguales", RowDiff.Status.IDENTICAL, identical, "Filas idénticas en origen y destino.");
-            addFilter(filters, group, "Solo origen", RowDiff.Status.SOURCE_ONLY, additions, "Solo en origen; exportar como INSERT hacia destino.");
-            addFilter(filters, group, "Solo destino", RowDiff.Status.TARGET_ONLY, removals, "Solo en destino; exportar como DELETE para igualar con origen.");
-            addFilter(filters, group, "Modificadas", RowDiff.Status.DIFFERENT, modifications, "Presentes en ambos lados con valores distintos.");
+            JTabbedPane filters = new JTabbedPane();
+            filters.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+            addFilter(filters, "Todas", null, result.changes().size(), "Mostrar todas las filas comparadas, incluidas las idénticas.");
+            addFilter(filters, "Iguales", RowDiff.Status.IDENTICAL, identical, "Filas idénticas en origen y destino.");
+            addFilter(filters, "Solo origen", RowDiff.Status.SOURCE_ONLY, additions, "Solo en origen; exportar como INSERT hacia destino.");
+            addFilter(filters, "Solo destino", RowDiff.Status.TARGET_ONLY, removals, "Solo en destino; exportar como DELETE para igualar con origen.");
+            addFilter(filters, "Modificadas", RowDiff.Status.DIFFERENT, modifications, "Presentes en ambos lados con valores distintos.");
+            filters.addChangeListener(event -> {
+                activeFilter = (RowDiff.Status) ((javax.swing.JComponent) filters.getSelectedComponent()).getClientProperty("rowStatus");
+                applyFilter();
+            });
             JPanel search = new JPanel(new BorderLayout(5, 0)); search.setOpaque(false);
-            searchIcon = new JLabel(UiIcons.themed(UiIcons.SEARCH, 14));
-            searchIcon.setForeground(ThemePalette.forMode(dark).foreground());
-            search.add(searchIcon, BorderLayout.WEST);
-            searchField = new PlaceholderTextField("Buscar en todas las columnas…"); searchField.setToolTipText("Filtrar las filas visibles por cualquier valor");
-            searchField.setBackground(ThemePalette.forMode(dark).editor());
-            searchField.setForeground(ThemePalette.forMode(dark).foreground());
-            searchField.setCaretColor(ThemePalette.forMode(dark).foreground());
-            searchField.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(ThemePalette.forMode(dark).border()), new EmptyBorder(3, 6, 3, 6)));
+            searchField = new PlaceholderTextField("Buscar en todas las columnas…"); searchField.putClientProperty("JTextField.leadingIcon", UiIcons.themed(UiIcons.SEARCH, 16)); searchField.setToolTipText("Filtrar las filas visibles por cualquier valor");
             search.add(searchField, BorderLayout.CENTER);
             toolbar.add(filters, BorderLayout.NORTH); toolbar.add(search, BorderLayout.CENTER);
             resultContent.add(toolbar, BorderLayout.NORTH);
@@ -195,12 +178,12 @@ final class RowComparisonPanel extends JPanel {
             changesScroll = new JScrollPane(changesTable);
             changesScroll.setColumnHeaderView(changesTable.getTableHeader());
             resultContent.add(changesScroll, BorderLayout.CENTER);
-            applyFilter(); applyTableTheme(changesTable);
+            applyFilter();
         }
 
         if (result.truncated()) {
             JLabel warning = new JLabel("Resultados limitados: no se muestran todas las filas comparadas.");
-            warning.setForeground(dark ? new Color(230, 174, 85) : new Color(155, 79, 21));
+            warning.setForeground(javax.swing.UIManager.getColor("Component.warning.focusedBorderColor"));
             resultContent.add(warning, BorderLayout.SOUTH);
         }
         resultContent.revalidate(); resultContent.repaint(); revalidate(); repaint();
@@ -219,29 +202,27 @@ final class RowComparisonPanel extends JPanel {
     boolean isExpanded() { return disclosure.isSelected(); }
 
     void showLoading(String tableName) {
-        result = null; changesTable = null; searchField = null; searchIcon = null; changesScroll = null; sorter = null; filterButtons.clear();
+        result = null; changesTable = null; searchField = null; changesScroll = null; sorter = null;
         summary.setText("Comparando " + tableName + "…"); export.setEnabled(false);
         resultContent.removeAll();
         JLabel loading = new JLabel("Comparando filas de " + tableName + "…", JLabel.CENTER);
-        loading.setForeground(ThemePalette.forMode(dark).foreground());
         resultContent.add(loading, BorderLayout.CENTER);
         if (!isExpanded()) setExpanded(true);
         resultContent.revalidate(); resultContent.repaint();
     }
 
     void showMessage(String message) {
-        result = null; changesTable = null; searchField = null; searchIcon = null; changesScroll = null; sorter = null; filterButtons.clear();
+        result = null; changesTable = null; searchField = null; changesScroll = null; sorter = null;
         summary.setText("Comparación de filas"); export.setEnabled(false);
         resultContent.removeAll();
         JLabel label = new JLabel(message, JLabel.CENTER);
-        label.setForeground(ThemePalette.forMode(dark).foreground());
         resultContent.add(label, BorderLayout.CENTER);
         resultContent.revalidate(); resultContent.repaint();
     }
 
     private void clear(boolean collapse) {
         result = null; summary.setText("Seleccioná una tabla para comparar sus filas.");
-        resultContent.removeAll(); changesTable = null; searchField = null; searchIcon = null; changesScroll = null; sorter = null; filterButtons.clear();
+        resultContent.removeAll(); changesTable = null; searchField = null; changesScroll = null; sorter = null;
         export.setEnabled(false);
         if (collapse) disclosure.setSelected(false);
         updateExpandedState(); resultContent.revalidate(); resultContent.repaint();
@@ -249,47 +230,18 @@ final class RowComparisonPanel extends JPanel {
 
     void setThemeColors(boolean dark) {
         this.dark = dark;
-        ThemePalette palette = ThemePalette.forMode(dark);
-        setBackground(palette.panel()); body.setBackground(palette.panel()); resultContent.setBackground(palette.panel());
-        summary.setForeground(palette.foreground());
-        AppTheme.styleToggleButton(disclosure, dark);
-        for (JToggleButton filter : filterButtons) AppTheme.styleToggleButton(filter, dark);
-        for (JCheckBox option : new JCheckBox[]{inserts, updates, deletes}) {
-            option.setForeground(palette.foreground()); option.setBackground(palette.panel());
-        }
-        if (searchField != null) {
-            searchField.setBackground(palette.editor()); searchField.setForeground(palette.foreground());
-            searchField.setCaretColor(palette.foreground());
-            searchField.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(palette.border()), new EmptyBorder(3, 6, 3, 6)));
-        }
-        if (searchIcon != null) searchIcon.setForeground(palette.foreground());
-        if (changesScroll != null) {
-            changesScroll.setBorder(BorderFactory.createLineBorder(palette.border()));
-            changesScroll.getViewport().setBackground(palette.editor());
-            if (changesScroll.getColumnHeader() != null) changesScroll.getColumnHeader().setBackground(palette.panel());
-        }
-        export.setForeground(palette.foreground()); export.setBackground(palette.panel());
-        setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
-                palette.border()), new EmptyBorder(5, 0, 0, 0)));
         if (changesTable != null) {
             changesTable.getColumnModel().getColumn(0).setCellRenderer(new StatusCellRenderer(dark));
-            for (int column = 1; column < changesTable.getColumnModel().getColumnCount(); column++)
+            for (int column = 1; column < changesTable.getColumnCount(); column++)
                 changesTable.getColumnModel().getColumn(column).setCellRenderer(new FieldCellRenderer(dark));
-            applyTableTheme(changesTable);
+            changesTable.repaint();
         }
     }
 
-    private void addFilter(JPanel panel, ButtonGroup group, String name, RowDiff.Status status, long count, String tooltip) {
-        JToggleButton button = new JToggleButton(name + " (" + count + ")");
-        button.setToolTipText(tooltip);
-        group.add(button); panel.add(button); filterButtons.add(button);
-        if (status == null) button.setSelected(true);
-        AppTheme.styleToggleButton(button, dark);
-        button.addActionListener(event -> {
-            activeFilter = status; applyFilter();
-            for (JToggleButton filter : filterButtons) AppTheme.styleToggleButton(filter, dark);
-        });
+    private void addFilter(JTabbedPane tabs, String name, RowDiff.Status status, long count, String tooltip) {
+        JPanel page = new JPanel(); page.setPreferredSize(new Dimension(0, 0));
+        page.putClientProperty("rowStatus", status);
+        tabs.addTab(name + " (" + count + ")", null, page, tooltip);
     }
 
     private void applyFilter() {
@@ -306,16 +258,10 @@ final class RowComparisonPanel extends JPanel {
         });
     }
 
-    private void applyTableTheme(JTable table) {
-        ThemePalette palette = ThemePalette.forMode(dark);
-        table.setBackground(palette.editor()); table.setForeground(palette.foreground());
-        table.setGridColor(palette.border()); table.setSelectionBackground(palette.selection());
-        table.setSelectionForeground(palette.foreground());
-        table.getTableHeader().setBackground(palette.panel()); table.getTableHeader().setForeground(palette.foreground());
-    }
-
     private void updateExpandedState() {
         body.setVisible(disclosure.isSelected());
+        setMinimumSize(new Dimension(100, disclosure.isSelected()
+                ? com.formdev.flatlaf.util.UIScale.scale(190) : getComponent(0).getPreferredSize().height + 8));
         disclosure.setText(disclosure.isSelected() ? "▾ Comparación de filas" : "▸ Comparación de filas");
         AppTheme.styleToggleButton(disclosure, dark);
         revalidate(); repaint();
@@ -371,10 +317,10 @@ final class RowComparisonPanel extends JPanel {
             else {
                 int modelRow = table.convertRowIndexToModel(row);
                 String status = String.valueOf(table.getModel().getValueAt(modelRow, 0));
-                if (status.startsWith("Agregada")) setBackground(dark ? new Color(35, 84, 66) : new Color(222, 246, 229));
-                else if (status.startsWith("Quitada")) setBackground(dark ? new Color(104, 48, 52) : new Color(255, 226, 226));
+                if (status.startsWith("Agregada")) setBackground(ThemePalette.addedRow(dark));
+                else if (status.startsWith("Quitada")) setBackground(ThemePalette.removedRow(dark));
                 else if (status.startsWith("Igual")) setBackground(table.getBackground());
-                else if (field.different()) setBackground(dark ? new Color(91, 69, 34) : new Color(255, 241, 204));
+                else if (field.different()) setBackground(ThemePalette.modifiedBackground(dark));
                 else setBackground(table.getBackground());
             }
             return this;
@@ -389,10 +335,10 @@ final class RowComparisonPanel extends JPanel {
             Component cell = super.getTableCellRendererComponent(table, value, selected, focus, row, column);
             if (!selected) {
                 String status = String.valueOf(value);
-                if (status.startsWith("Agregada")) cell.setBackground(dark ? new Color(35, 84, 66) : new Color(222, 246, 229));
-                else if (status.startsWith("Quitada")) cell.setBackground(dark ? new Color(104, 48, 52) : new Color(255, 226, 226));
+                if (status.startsWith("Agregada")) cell.setBackground(ThemePalette.addedRow(dark));
+                else if (status.startsWith("Quitada")) cell.setBackground(ThemePalette.removedRow(dark));
                 else if (status.startsWith("Igual")) cell.setBackground(table.getBackground());
-                else cell.setBackground(dark ? new Color(91, 69, 34) : new Color(255, 241, 204));
+                else cell.setBackground(ThemePalette.modifiedBackground(dark));
             }
             return cell;
         }

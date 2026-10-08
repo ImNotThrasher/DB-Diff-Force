@@ -1,135 +1,37 @@
 package studio.dbdiff;
 
-import javax.swing.JButton;
-import javax.swing.JCheckBox;
-import javax.swing.JComboBox;
-import javax.swing.JComponent;
-import javax.swing.JEditorPane;
-import javax.swing.JLabel;
-import javax.swing.JList;
-import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JSplitPane;
-import javax.swing.JSpinner;
-import javax.swing.JTable;
-import javax.swing.JTextArea;
-import javax.swing.JTextField;
-import javax.swing.JViewport;
-import javax.swing.JToggleButton;
-import javax.swing.RootPaneContainer;
-import javax.swing.SwingUtilities;
-import javax.swing.UIManager;
-import java.awt.Color;
-import java.awt.Component;
-import java.awt.Container;
-import java.awt.SystemColor;
-import java.awt.Window;
+import com.formdev.flatlaf.FlatLaf;
+import com.formdev.flatlaf.FlatLightLaf;
+import com.formdev.flatlaf.FlatDarkLaf;
+import javax.swing.*;
+import java.awt.*;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
-/** Applies the selected theme to the application and standard Swing dialogs. */
+/** Installs native FlatLaf defaults; only diff renderers own semantic colors. */
 public final class AppTheme {
-    private static final ThemePalette DARK = ThemePalette.forMode(true);
-    private static final ThemePalette LIGHT = ThemePalette.forMode(false);
-    private static final Color DARK_BACKGROUND = DARK.editor();
-
     private AppTheme() { }
 
     public static boolean isDark(String mode) {
         return "Oscuro".equals(mode) || ("Sistema".equals(mode) && systemUsesDarkTheme());
     }
 
-    public static void apply(Window window, JComponent header, String mode) {
+    /** Called before constructing any Swing component, including Main's fields. */
+    static void initialize(String mode) {
         boolean dark = isDark(mode);
-        ThemePalette palette = ThemePalette.forMode(dark);
-        Color panel = palette.panel();
-        Color foreground = palette.foreground();
-        Color border = palette.border();
-        // Use the same Swing delegate for every mode. Native Windows controls can
-        // ignore custom colors, which makes the app palette appear mixed.
-        try { UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName()); }
-        catch (Exception ignored) { }
-        UIManager.put("Panel.background", panel); UIManager.put("Panel.foreground", foreground);
-        UIManager.put("OptionPane.background", panel); UIManager.put("OptionPane.messageForeground", foreground);
-        UIManager.put("CheckBox.background", panel); UIManager.put("CheckBox.foreground", foreground);
-        UIManager.put("ComboBox.background", panel); UIManager.put("ComboBox.foreground", foreground);
-        UIManager.put("ComboBox.buttonBackground", panel);
-        UIManager.put("ComboBox.buttonShadow", border); UIManager.put("ComboBox.buttonDarkShadow", border);
-        UIManager.put("ComboBox.buttonHighlight", panel);
-        UIManager.put("ComboBox.disabledBackground", dark ? DARK_BACKGROUND : Color.WHITE);
-        UIManager.put("ComboBox.disabledForeground", dark ? new Color(157, 166, 178) : new Color(105, 116, 130));
-        UIManager.put("ComboBox.selectionBackground", palette.selection());
-        UIManager.put("ComboBox.selectionForeground", foreground);
-        UIManager.put("Spinner.background", panel); UIManager.put("Spinner.foreground", foreground);
-        UIManager.put("TextField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("TextField.foreground", foreground);
-        UIManager.put("PasswordField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("PasswordField.foreground", foreground);
-        UIManager.put("Button.background", panel); UIManager.put("Button.foreground", foreground);
-        UIManager.put("Button.disabledText", dark ? new Color(135, 144, 157) : new Color(130, 140, 151));
-        UIManager.put("List.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("List.foreground", foreground);
-        UIManager.put("Table.background", panel); UIManager.put("Table.foreground", foreground);
-        UIManager.put("ScrollPane.background", panel); UIManager.put("Viewport.background", panel);
-        UIManager.put("Menu.background", panel); UIManager.put("Menu.foreground", foreground);
-        UIManager.put("MenuItem.background", panel); UIManager.put("MenuItem.foreground", foreground);
-        UIManager.put("CheckBoxMenuItem.background", panel); UIManager.put("CheckBoxMenuItem.foreground", foreground);
-        UIManager.put("PopupMenu.background", panel); UIManager.put("PopupMenu.foreground", foreground);
-        UIManager.put("TitledBorder.titleColor", foreground);
-        if (window != null) SwingUtilities.updateComponentTreeUI(window);
-        if (header != null) header.setBackground(dark ? new Color(20, 25, 34) : new Color(23, 36, 54));
-        if (window instanceof RootPaneContainer root) applyTree(root.getContentPane(), header, panel, foreground, border, dark);
-        if (window != null) window.repaint();
-    }
-
-    private static void applyTree(Component node, JComponent header, Color panel, Color foreground, Color border, boolean dark) {
-        if ((node instanceof JPanel && node != header) || node instanceof JScrollPane || node instanceof JViewport || node instanceof JSplitPane) node.setBackground(panel);
-        if (node instanceof JLabel label) {
-            label.setOpaque(false);
-            boolean inHeader = header != null && SwingUtilities.isDescendingFrom(label, header);
-            if (inHeader) {
-                label.setForeground(label.getText() != null && label.getText().equals(AppInfo.NAME) ? Color.WHITE : new Color(184, 198, 216));
-            } else {
-                String text = label.getText();
-                if (text != null && (text.startsWith("Solo se exporta") || text.startsWith("Se conservan"))) label.setForeground(dark ? new Color(236, 184, 95) : new Color(155, 79, 21));
-                else label.setForeground(foreground);
-            }
-        } else if (node instanceof JTextArea area) {
-            area.setBackground(dark ? DARK_BACKGROUND : LIGHT.editor()); area.setForeground(foreground); area.setCaretColor(foreground);
-        } else if (node instanceof JEditorPane editor) {
-            editor.setBackground(dark ? DARK_BACKGROUND : Color.WHITE); editor.setForeground(foreground);
-        } else if (node instanceof JList<?> list) {
-            list.setBackground(dark ? DARK_BACKGROUND : Color.WHITE); list.setForeground(foreground);
-        } else if (node instanceof JTable table) {
-            table.setBackground(panel); table.setForeground(foreground); table.setGridColor(border);
-            table.setSelectionBackground(dark ? DARK.selection() : LIGHT.selection()); table.setSelectionForeground(foreground);
-            table.getTableHeader().setBackground(panel); table.getTableHeader().setForeground(foreground);
-        } else if (node instanceof JButton button) {
-            boolean primary = Boolean.TRUE.equals(button.getClientProperty("dbdiff.primary"));
-            button.setBackground(primary ? new Color(61, 117, 207) : panel); button.setForeground(primary ? Color.WHITE : foreground);
-            if (!primary) button.setBorder(javax.swing.BorderFactory.createCompoundBorder(javax.swing.BorderFactory.createLineBorder(border), javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8)));
-        } else if (node instanceof JToggleButton button) {
-            styleToggleButton(button, dark);
-        } else if (node instanceof JCheckBox check) {
-            check.setBackground(panel); check.setForeground(foreground);
-        } else if (node instanceof JComboBox<?> combo) {
-            combo.setBackground(panel); combo.setForeground(foreground);
-        } else if (node instanceof JSpinner spinner) {
-            spinner.setBackground(panel); spinner.setForeground(foreground);
-        } else if (node instanceof JTextField field) {
-            field.setBackground(dark ? DARK_BACKGROUND : Color.WHITE); field.setForeground(foreground); field.setCaretColor(foreground);
+        if (!(UIManager.getLookAndFeel() instanceof FlatLaf) || FlatLaf.isLafDark() != dark) {
+            if (dark) FlatDarkLaf.setup(); else FlatLightLaf.setup();
         }
-        if (node instanceof Container container) for (Component child : container.getComponents()) applyTree(child, header, panel, foreground, border, dark);
     }
 
-    /** Use explicit selected colors so the cross-platform Swing look does not fade active controls. */
+    public static void apply(Window window, JComponent header, String mode) {
+        initialize(mode);
+        FlatLaf.updateUI();
+    }
+
     static void styleToggleButton(JToggleButton button, boolean dark) {
-        ThemePalette palette = ThemePalette.forMode(dark);
-        button.setOpaque(true);
-        button.setContentAreaFilled(true);
-        button.setFocusPainted(false);
-        button.setBackground(button.isSelected() ? new Color(49, 112, 190) : palette.panel());
-        button.setForeground(button.isSelected() ? Color.WHITE : palette.foreground());
-        button.setBorder(javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(button.isSelected() ? new Color(75, 143, 224) : palette.border()),
-                javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        // Selection, focus and disabled appearance belong to the installed theme.
+        button.repaint();
     }
 
     private static boolean systemUsesDarkTheme() {

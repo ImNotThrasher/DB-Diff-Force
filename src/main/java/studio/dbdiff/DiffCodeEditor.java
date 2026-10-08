@@ -41,7 +41,6 @@ final class DiffCodeEditor extends JPanel {
         gutter = new DiffGutter();
         text.setBorder(new EmptyBorder(unifiedMode ? 24 : 7, 8, 7, 8));
         scrollPane = new JScrollPane(text);
-        scrollPane.setBorder(BorderFactory.createEtchedBorder());
         scrollPane.setRowHeaderView(gutter);
         add(scrollPane, BorderLayout.CENTER);
     }
@@ -129,11 +128,20 @@ final class DiffCodeEditor extends JPanel {
             setToolTipText("");
         }
 
+        @Override public void updateUI() {
+            super.updateUI();
+            // FlatLaf reinstalls the text delegate on a theme change. Keep it transparent
+            // so it paints glyphs/selection over our full-width diff backgrounds.
+            setOpaque(false);
+        }
+
         List<DiffEngine.DiffLine> rows() { return rows; }
         void setRows(List<DiffEngine.DiffLine> rows) { this.rows = rows; }
         void setDark(boolean dark) { this.dark = dark; repaint(); }
 
-        @Override public boolean getScrollableTracksViewportWidth() { return false; }
+        @Override public boolean getScrollableTracksViewportWidth() {
+            return getParent() instanceof javax.swing.JViewport viewport && getUI().getPreferredSize(this).width <= viewport.getWidth();
+        }
 
         void applyLineColors(List<DiffEngine.DiffLine> rows, boolean dark) {
             // El color de párrafo marca toda la línea y se fija también el texto

@@ -21,7 +21,8 @@ public final class ComparisonView extends JPanel {
     private static final String EMPTY = "empty";
     private String selectedMode = SPLIT;
     private final JTextArea emptyMessage = new JTextArea();
-    private final JLabel databasePair = new JLabel("Base origen  →  Base destino");
+    private final JLabel sourceEndpoint = new JLabel("Sin seleccionar");
+    private final JLabel targetEndpoint = new JLabel("Sin seleccionar");
     private final JTextArea summary = new JTextArea();
     private final DiffCodeEditor source = new DiffCodeEditor(false, true);
     private final DiffCodeEditor target = new DiffCodeEditor(false, false);
@@ -42,10 +43,10 @@ public final class ComparisonView extends JPanel {
         definitions.setResizeWeight(.5); definitions.setBorder(null); definitions.setDividerSize(7);
         cards.add(definitions, SPLIT);
         JPanel unifiedPanel = new JPanel(new BorderLayout());
-        unifiedHeading.setFont(new Font("Segoe UI", Font.BOLD, 11)); unifiedHeading.setBorder(new EmptyBorder(0, 0, 6, 0));
+        unifiedHeading.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD)); unifiedHeading.setBorder(new EmptyBorder(0, 0, 6, 0));
         unifiedPanel.add(unifiedHeading, BorderLayout.NORTH); unifiedPanel.add(unified, BorderLayout.CENTER);
         cards.add(unifiedPanel, UNIFIED);
-        emptyMessage.setEditable(false);
+        emptyMessage.setEditable(false); emptyMessage.setOpaque(false);
         emptyMessage.setLineWrap(true);
         emptyMessage.setWrapStyleWord(true);
         emptyMessage.setBorder(new EmptyBorder(24, 24, 24, 24));
@@ -62,21 +63,14 @@ public final class ComparisonView extends JPanel {
     public void setDatabases(String sourceName, String targetName, String sourceServer, String targetServer) {
         String source = endpointName(sourceServer, sourceName);
         String target = endpointName(targetServer, targetName);
-        databasePair.setText("Base origen: " + source + "   →   Base destino: " + target);
-        databasePair.setToolTipText(databasePair.getText());
+        sourceEndpoint.setText(source); sourceEndpoint.setToolTipText(source);
+        targetEndpoint.setText(target); targetEndpoint.setToolTipText(target);
         sourceHeading.setText("ORIGEN · " + displayName(sourceName));
         targetHeading.setText("DESTINO · " + displayName(targetName));
     }
 
     public void setThemeColors(boolean dark) {
         this.dark = dark;
-        ThemePalette palette = ThemePalette.forMode(dark);
-        Color panel = palette.panel();
-        Color foreground = palette.foreground();
-        setBackground(panel); cards.setBackground(panel);
-        emptyMessage.setBackground(panel); emptyMessage.setForeground(foreground);
-        databasePair.setForeground(foreground); summary.setForeground(foreground);
-        sourceHeading.setForeground(foreground); targetHeading.setForeground(foreground); unifiedHeading.setForeground(foreground);
         for (DiffCodeEditor editor : List.of(source, target, unified)) editor.setThemeColors(dark);
         if (splitModeButton != null) {
             AppTheme.styleToggleButton(splitModeButton, dark);
@@ -100,7 +94,8 @@ public final class ComparisonView extends JPanel {
     public void showResult(DiffEngine.Result result, boolean dark) {
         current = result; this.dark = dark;
         showMode(selectedMode);
-        summary.setText(result.key() + "   ·   Estado: " + statusName(result.status()));
+        summary.setText(kindName(result.key().kind()) + " · " + result.key().qualifiedName()
+                + " · Estado: " + statusName(result.status()));
         String left = result.source() == null ? "El objeto no existe en el origen." : result.source().definition();
         String right = result.target() == null ? "El objeto no existe en el destino." : result.target().definition();
         List<DiffEngine.DiffLine> sourceRows = result.diffLines().stream().filter(line -> line.sourceLineNumber() != null).toList();
@@ -114,18 +109,30 @@ public final class ComparisonView extends JPanel {
     private JPanel headerPanel() {
         JPanel panel = new JPanel(new BorderLayout(10, 4));
         JPanel labels = new JPanel(new BorderLayout(0, 4)); labels.setOpaque(false);
-        databasePair.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        summary.setRows(2); summary.setEditable(false); summary.setLineWrap(true); summary.setWrapStyleWord(true);
-        summary.setOpaque(false); summary.setFont(new Font("Segoe UI", Font.PLAIN, 12)); summary.setBorder(null);
-        labels.add(databasePair, BorderLayout.NORTH); labels.add(summary, BorderLayout.CENTER);
+        JPanel endpoints = new JPanel(new java.awt.GridLayout(1, 2, 12, 0));
+        endpoints.add(endpointPanel("Origen", sourceEndpoint));
+        endpoints.add(endpointPanel("Destino", targetEndpoint));
+        summary.setRows(1); summary.setEditable(false); summary.setLineWrap(true); summary.setWrapStyleWord(true);
+        summary.setOpaque(false); summary.setFont(javax.swing.UIManager.getFont("Label.font")); summary.setBorder(null);
+        labels.add(endpoints, BorderLayout.CENTER);
         splitModeButton = new JToggleButton("Dividido", UiIcons.themed(UiIcons.SPLIT, 16));
         unifiedModeButton = new JToggleButton("Unificado", UiIcons.themed(UiIcons.UNIFIED, 16));
         splitModeButton.setIconTextGap(6); unifiedModeButton.setIconTextGap(6);
         splitModeButton.setToolTipText("Ver origen y destino en paralelo"); unifiedModeButton.setToolTipText("Ver el diff con números de origen y destino");
         ButtonGroup modes = new ButtonGroup(); modes.add(splitModeButton); modes.add(unifiedModeButton); splitModeButton.setSelected(true);
         splitModeButton.addActionListener(e -> showMode(SPLIT)); unifiedModeButton.addActionListener(e -> showMode(UNIFIED));
-        JPanel choices = new JPanel(); choices.setOpaque(false); choices.add(splitModeButton); choices.add(unifiedModeButton);
-        panel.setBorder(new EmptyBorder(2, 4, 4, 4)); panel.add(labels, BorderLayout.CENTER); panel.add(choices, BorderLayout.SOUTH);
+        JPanel choices = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0)); choices.setOpaque(false); choices.add(splitModeButton); choices.add(unifiedModeButton);
+        JPanel objectBar = new JPanel(new BorderLayout(8, 0));
+        objectBar.add(summary, BorderLayout.CENTER); objectBar.add(choices, BorderLayout.EAST);
+        panel.setBorder(new EmptyBorder(2, 4, 4, 4)); panel.add(labels, BorderLayout.NORTH); panel.add(objectBar, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private static JPanel endpointPanel(String title, JLabel value) {
+        JPanel panel = new JPanel(new BorderLayout(0, 3));
+        JLabel heading = new JLabel(title); heading.putClientProperty("FlatLaf.styleClass", "small");
+        value.setMinimumSize(new java.awt.Dimension(0, value.getPreferredSize().height));
+        panel.add(heading, BorderLayout.NORTH); panel.add(value, BorderLayout.CENTER);
         return panel;
     }
 
@@ -143,13 +150,23 @@ public final class ComparisonView extends JPanel {
 
     private static String displayName(String name) { return name == null || name.isBlank() ? "(sin seleccionar)" : name; }
 
+    private static String kindName(SchemaObject.Kind kind) {
+        return switch (kind) {
+            case TABLE -> "Tabla";
+            case VIEW -> "Vista";
+            case PROCEDURE -> "Procedimiento";
+            case FUNCTION -> "Función";
+            case TRIGGER -> "Trigger";
+        };
+    }
+
     private static String endpointName(String server, String database) {
         String name = displayName(database);
         return server == null || server.isBlank() ? name : server + " / " + name;
     }
 
     private static JPanel titled(JLabel heading, DiffCodeEditor editor) {
-        JPanel panel = new JPanel(new BorderLayout()); heading.setFont(new Font("Segoe UI", Font.BOLD, 11)); heading.setBorder(new EmptyBorder(0, 0, 6, 0));
+        JPanel panel = new JPanel(new BorderLayout()); heading.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD)); heading.setBorder(new EmptyBorder(0, 0, 6, 0));
         panel.add(heading, BorderLayout.NORTH); panel.add(editor, BorderLayout.CENTER); return panel;
     }
 

@@ -25,12 +25,7 @@ final class ConnectionDialog extends JDialog {
         return dialog.selection;
     }
 
-    private static JButton actionButton(String name, boolean primary) {
-        JButton button = new JButton(name);
-        button.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        if (primary) { button.setBackground(new Color(61, 117, 207)); button.setForeground(Color.WHITE); button.setFocusPainted(false); }
-        return button;
-    }
+    private static JButton actionButton(String name) { return new JButton(name); }
     private final JTextField[][] fields = new JTextField[2][3];
     private final JPasswordField[] passwords = {new JPasswordField(15), new JPasswordField(15)};
     private final JCheckBox[] rememberPasswords = {new JCheckBox("Recordar contraseña en este equipo"), new JCheckBox("Recordar contraseña en este equipo")};
@@ -75,7 +70,7 @@ final class ConnectionDialog extends JDialog {
         hc.gridx = 0; hc.gridy = 0; header.add(new JLabel("Motor de base de datos"), hc);
         hc.gridx = 1; header.add(engine, hc);
         hc.gridx = 2; hc.insets = new Insets(4, 20, 4, 6); header.add(new JLabel("Tipo de origen"), hc);
-        hc.gridx = 3; hc.insets = new Insets(4, 6, 4, 6); sourceMode.setPrototypeDisplayValue(SourceMode.FLYWAY); header.add(sourceMode, hc);
+        hc.gridx = 3; hc.insets = new Insets(4, 6, 4, 6); sourceMode.setPrototypeDisplayValue(SourceMode.SNAPSHOT); header.add(sourceMode, hc);
 
         originCards.add(buildDatabasePanel(0), "database");
         originCards.add(buildFileSourcePanel(), "file");
@@ -85,15 +80,13 @@ final class ConnectionDialog extends JDialog {
         endpoints.add(originCards); endpoints.add(destinationPanel);
         sourceMode.addActionListener(event -> updateSourceMode());
 
-        JLabel secure = new JLabel("Las contraseñas solo se guardan si activás la opción; se usa el almacén seguro del sistema operativo.");
-        secure.setBorder(new EmptyBorder(0, 20, 0, 20));
-        connectButton = actionButton("Conectar bases", true);
+        connectButton = actionButton("Iniciar comparación");
         JButton cancel = new JButton("Cancelar");
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT)); buttons.add(cancel); buttons.add(connectButton);
         cancel.addActionListener(e -> { autoConnectRequested = false; dispose(); });
         connectButton.addActionListener(e -> requestConnect());
         JPanel content = new JPanel(new BorderLayout()); content.add(header, BorderLayout.NORTH); content.add(endpoints, BorderLayout.CENTER);
-        add(content, BorderLayout.CENTER); add(secure, BorderLayout.NORTH); add(buttons, BorderLayout.SOUTH);
+        add(content, BorderLayout.CENTER); add(buttons, BorderLayout.SOUTH);
         updateSourceMode(); setMinimumSize(new Dimension(850, 480)); pack(); setLocationRelativeTo(owner);
     }
 
@@ -101,9 +94,9 @@ final class ConnectionDialog extends JDialog {
         String[] labels = {"Servidor", "Puerto", "Usuario"};
         String[] defaults = {"127.0.0.1", Integer.toString(((DatabaseEngine) engine.getSelectedItem()).defaultPort()), ""};
         JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(210, 218, 228)), new EmptyBorder(9, 10, 9, 10)));
+        panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createTitledBorder(""), new EmptyBorder(9, 10, 9, 10)));
         GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(4, 4, 4, 4); c.anchor = GridBagConstraints.WEST;
-        c.gridx = 0; c.gridy = 0; c.gridwidth = 2; JLabel title = new JLabel(side == 0 ? "BASE DE ORIGEN" : "BASE DE DESTINO"); title.setFont(new Font("Segoe UI", Font.BOLD, 11)); panel.add(title, c);
+        c.gridx = 0; c.gridy = 0; c.gridwidth = 2; JLabel title = new JLabel(side == 0 ? "BASE DE ORIGEN" : "BASE DE DESTINO"); title.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD)); panel.add(title, c);
         c.gridy++; c.gridwidth = 1; c.weightx = 0; panel.add(new JLabel("Perfil"), c);
         JComboBox<String> savedChoice = savedChoices.get(side); savedChoice.setPrototypeDisplayValue("Elegí un perfil guardado"); refreshSavedChoices(side, null);
         JButton saveProfile = new JButton("Guardar"), deleteProfile = new JButton("Eliminar");
@@ -120,9 +113,10 @@ final class ConnectionDialog extends JDialog {
         JComboBox<String> database = databases.get(side); database.setEnabled(false); database.setPrototypeDisplayValue("Elegí una base de datos"); panel.add(database, c);
         c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel("Contraseña"), c);
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; passwords[side].setEchoChar('•'); panel.add(passwords[side], c);
-        c.gridy++; c.gridx = 0; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(rememberPasswords[side], c);
+        c.gridy++; c.gridx = 0; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; rememberPasswords[side].setToolTipText("Solo si activás esta opción se guarda la contraseña en el almacén seguro del sistema operativo."); panel.add(rememberPasswords[side], c);
         c.gridy++; panel.add(tls[side], c);
-        testButtons[side] = new JButton("Probar conexión"); testStatus[side] = new JLabel("Sin probar"); testStatus[side].setForeground(new Color(105, 118, 136));
+        c.gridy++; panel.add(new JSeparator(), c);
+        testButtons[side] = new JButton("Probar conexión"); testStatus[side] = new JLabel("Sin probar"); testStatus[side].setForeground(UIManager.getColor("Label.disabledForeground"));
         JPanel testRow = new JPanel(new BorderLayout(8, 0)); testRow.add(testButtons[side], BorderLayout.WEST); testRow.add(testStatus[side], BorderLayout.CENTER);
         c.gridy++; panel.add(testRow, c);
         final int endpointIndex = side;
@@ -139,9 +133,9 @@ final class ConnectionDialog extends JDialog {
 
     private JPanel buildFileSourcePanel() {
         JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(210, 218, 228)), new EmptyBorder(12, 12, 12, 12)));
+        panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createTitledBorder(""), new EmptyBorder(12, 12, 12, 12)));
         GridBagConstraints c = new GridBagConstraints(); c.gridx = 0; c.gridy = 0; c.gridwidth = 2; c.anchor = GridBagConstraints.WEST; c.insets = new Insets(5, 4, 8, 4);
-        sourceCardTitle.setFont(new Font("Segoe UI", Font.BOLD, 11)); panel.add(sourceCardTitle, c);
+        sourceCardTitle.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD)); panel.add(sourceCardTitle, c);
         c.gridy++; sourceCardDescription.setVerticalAlignment(SwingConstants.TOP); sourceCardDescription.setPreferredSize(new Dimension(360, 72)); panel.add(sourceCardDescription, c);
         c.gridy++; c.gridwidth = 1; c.insets = new Insets(4, 4, 4, 4); panel.add(new JLabel("Carpeta"), c);
         sourceFolderField.setEditable(false); sourceFolderField.setText("Seleccioná una carpeta…");
@@ -282,7 +276,7 @@ final class ConnectionDialog extends JDialog {
         Object selectedDatabase = database.getSelectedItem(); if (selectedDatabase != null) preferredDatabase[side] = selectedDatabase.toString();
         updatingDatabaseChoice[side] = true; database.removeAllItems(); database.setEnabled(false); updatingDatabaseChoice[side] = false;
         testedSuccessfully[side] = false; testGenerations[side]++;
-        if (testStatus[side] != null) { testStatus[side].setText("Probar nuevamente"); testStatus[side].setForeground(new Color(105, 118, 136)); }
+        if (testStatus[side] != null) { testStatus[side].setText("Probar nuevamente"); testStatus[side].setForeground(UIManager.getColor("Label.disabledForeground")); }
     }
 
     private void requestConnect() {
@@ -300,7 +294,7 @@ final class ConnectionDialog extends JDialog {
         for (int side = firstSide; side < 2; side++) {
             if (databases.get(side).getItemCount() == 0) { autoConnectRequested = false; return; }
             if (databases.get(side).getSelectedItem() == null) {
-                testStatus[side].setText("Elegí una base para continuar"); testStatus[side].setForeground(new Color(178, 112, 24)); return;
+                testStatus[side].setText("Elegí una base para continuar"); testStatus[side].setForeground(UIManager.getColor("Component.warning.focusedBorderColor")); return;
             }
         }
         autoConnectRequested = false; accept();
@@ -338,13 +332,13 @@ final class ConnectionDialog extends JDialog {
                         choice.setEnabled(!available.isEmpty()); testedSuccessfully[side] = true;
                         updatingDatabaseChoice[side] = false;
                         testStatus[side].setText(available.isEmpty() ? "Conectado; no hay bases visibles" : choice.getSelectedItem() == null ? "Conectado · " + available.size() + " bases · elegí una" : "Conectado · base seleccionada");
-                        testStatus[side].setForeground(available.isEmpty() ? new Color(178, 112, 24) : new Color(49, 130, 97));
+                        testStatus[side].setForeground(available.isEmpty() ? UIManager.getColor("Component.warning.focusedBorderColor") : UIManager.getColor("Component.success.focusedBorderColor"));
                         finishAutomaticConnect();
                     } catch (InterruptedException ex) {
                         Thread.currentThread().interrupt(); testedSuccessfully[side] = false; autoConnectRequested = false; testStatus[side].setText("Prueba interrumpida");
                     } catch (ExecutionException ex) {
                         Throwable cause = ex.getCause() == null ? ex : ex.getCause();
-                        testedSuccessfully[side] = false; autoConnectRequested = false; testStatus[side].setText("Error de conexión"); testStatus[side].setForeground(new Color(178, 65, 65));
+                        testedSuccessfully[side] = false; autoConnectRequested = false; testStatus[side].setText("Error de conexión"); testStatus[side].setForeground(UIManager.getColor("Component.error.focusedBorderColor"));
                         JOptionPane.showMessageDialog(ConnectionDialog.this, cause.getMessage() == null ? cause.toString() : cause.getMessage(), "Falló la prueba de conexión", JOptionPane.ERROR_MESSAGE);
                     }
                 }
