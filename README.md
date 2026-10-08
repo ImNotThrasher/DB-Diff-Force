@@ -5,12 +5,13 @@ DB-Diff Studio is a desktop tool for comparing MariaDB and MySQL schemas and exp
 ## Requirements
 
 - JDK 21 or later
-- Network access the first time you launch, to download the MariaDB and MySQL JDBC drivers (after that they are cached locally)
+- Apache Maven 3.9 or later
+- Network access on the first build so Maven can download dependencies (they are cached locally afterward)
 - Two reachable instances of the selected database engine for a comparison
 
 ## Run
 
-On Windows, run `run.bat`. It compiles the Java sources and launches the app. The JDBC driver is downloaded to `%LOCALAPPDATA%\DB-Diff-Studio\drivers`; credentials are never written there. On macOS or Linux, run `./run.sh`.
+On Windows, run `run.bat`. It builds the executable JAR and opens the desktop app in a separate window. The terminal returns to the prompt while the app stays open. On macOS or Linux, run `./run.sh`; the script builds and launches the app. To build without launching, run `mvn package`; the app is written to `target/db-diff-studio-0.2.0.jar`, with JDBC drivers in `target/lib`. Maven downloads the drivers and their dependencies into its local cache. Credentials are never saved there.
 
 The connection dialog accepts a database engine, then a host, port, database, user, and password for each endpoint. Both endpoints use the selected engine in this version. Passwords stay in memory for the session and are cleared when the window closes. TLS can be enabled per connection. The app does not persist connection profiles.
 
@@ -30,4 +31,4 @@ SQL Server and other engines can be added behind the `DatabaseConnector` interfa
 
 ## Design
 
-The app uses Java 21 and Swing so it can run on a stock JDK without a separate UI toolkit or build system. JDBC access and object extraction live behind `DatabaseConnector`; `MariaDbConnector` and `MySqlConnector` share a MySQL-family implementation. The UI runs database work off the event thread and owns the short-lived password arrays used for login.
+The app uses Java 21 and Swing. Maven manages the JDBC dependencies and prepares an executable JAR with its runtime libraries in `target/lib`. JDBC access and object extraction live behind `DatabaseConnector`; `MariaDbConnector` and `MySqlConnector` share a MySQL-family implementation. The UI runs database work off the event thread and owns the short-lived password arrays used for login.
