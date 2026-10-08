@@ -28,10 +28,9 @@ import java.nio.charset.StandardCharsets;
 
 /** Applies the selected theme to the application and standard Swing dialogs. */
 public final class AppTheme {
-    private static final Color DARK_BACKGROUND = new Color(30, 34, 42);
-    private static final Color DARK_PANEL = new Color(37, 42, 51);
-    private static final Color DARK_FOREGROUND = new Color(220, 225, 232);
-    private static final Color DARK_BORDER = new Color(65, 73, 84);
+    private static final ThemePalette DARK = ThemePalette.forMode(true);
+    private static final ThemePalette LIGHT = ThemePalette.forMode(false);
+    private static final Color DARK_BACKGROUND = DARK.editor();
 
     private AppTheme() { }
 
@@ -41,9 +40,10 @@ public final class AppTheme {
 
     public static void apply(Window window, JComponent header, String mode) {
         boolean dark = isDark(mode);
-        Color panel = dark ? DARK_PANEL : new Color(246, 248, 251);
-        Color foreground = dark ? DARK_FOREGROUND : new Color(35, 45, 58);
-        Color border = dark ? DARK_BORDER : new Color(223, 228, 235);
+        ThemePalette palette = ThemePalette.forMode(dark);
+        Color panel = palette.panel();
+        Color foreground = palette.foreground();
+        Color border = palette.border();
         // Use the same Swing delegate for every mode. Native Windows controls can
         // ignore custom colors, which makes the app palette appear mixed.
         try { UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName()); }
@@ -57,7 +57,7 @@ public final class AppTheme {
         UIManager.put("ComboBox.buttonHighlight", panel);
         UIManager.put("ComboBox.disabledBackground", dark ? DARK_BACKGROUND : Color.WHITE);
         UIManager.put("ComboBox.disabledForeground", dark ? new Color(157, 166, 178) : new Color(105, 116, 130));
-        UIManager.put("ComboBox.selectionBackground", dark ? new Color(57, 78, 105) : new Color(190, 211, 235));
+        UIManager.put("ComboBox.selectionBackground", palette.selection());
         UIManager.put("ComboBox.selectionForeground", foreground);
         UIManager.put("TextField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("TextField.foreground", foreground);
         UIManager.put("PasswordField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("PasswordField.foreground", foreground);
@@ -90,21 +90,21 @@ public final class AppTheme {
                 else label.setForeground(foreground);
             }
         } else if (node instanceof JTextArea area) {
-            area.setBackground(dark ? DARK_BACKGROUND : new Color(251, 252, 254)); area.setForeground(foreground); area.setCaretColor(foreground);
+            area.setBackground(dark ? DARK_BACKGROUND : LIGHT.editor()); area.setForeground(foreground); area.setCaretColor(foreground);
         } else if (node instanceof JEditorPane editor) {
             editor.setBackground(dark ? DARK_BACKGROUND : Color.WHITE); editor.setForeground(foreground);
         } else if (node instanceof JList<?> list) {
             list.setBackground(dark ? DARK_BACKGROUND : Color.WHITE); list.setForeground(foreground);
         } else if (node instanceof JTable table) {
             table.setBackground(panel); table.setForeground(foreground); table.setGridColor(border);
-            table.setSelectionBackground(dark ? new Color(57, 78, 105) : new Color(190, 211, 235)); table.setSelectionForeground(foreground);
+            table.setSelectionBackground(dark ? DARK.selection() : LIGHT.selection()); table.setSelectionForeground(foreground);
             table.getTableHeader().setBackground(panel); table.getTableHeader().setForeground(foreground);
         } else if (node instanceof JButton button) {
             boolean primary = Boolean.TRUE.equals(button.getClientProperty("dbdiff.primary"));
             button.setBackground(primary ? new Color(61, 117, 207) : panel); button.setForeground(primary ? Color.WHITE : foreground);
             if (!primary) button.setBorder(javax.swing.BorderFactory.createCompoundBorder(javax.swing.BorderFactory.createLineBorder(border), javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8)));
         } else if (node instanceof JToggleButton button) {
-            button.setBackground(button.isSelected() ? (dark ? new Color(57, 78, 105) : new Color(190, 211, 235)) : panel);
+            button.setBackground(button.isSelected() ? (dark ? DARK.selection() : LIGHT.selection()) : panel);
             button.setForeground(foreground);
         } else if (node instanceof JCheckBox check) {
             check.setBackground(panel); check.setForeground(foreground);
