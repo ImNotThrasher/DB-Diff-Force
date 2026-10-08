@@ -139,7 +139,7 @@ public final class Main {
     }
 
     private void connect() {
-        Endpoint[] endpoints = ConnectionDialog.showDialog(frame); if (endpoints == null) return;
+        Endpoint[] endpoints = ConnectionDialog.showDialog(frame, theme); if (endpoints == null) return;
         setBusy(true, "Conectando y leyendo las listas de objetos…");
         worker.submit(() -> {
             DatabaseConnector a = DatabaseConnectorFactory.create(endpoints[0]), b = DatabaseConnectorFactory.create(endpoints[1]);

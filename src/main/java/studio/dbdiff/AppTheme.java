@@ -14,6 +14,7 @@ import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JViewport;
+import javax.swing.RootPaneContainer;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import java.awt.Color;
@@ -42,7 +43,9 @@ public final class AppTheme {
         Color panel = dark ? DARK_PANEL : new Color(246, 248, 251);
         Color foreground = dark ? DARK_FOREGROUND : new Color(35, 45, 58);
         Color border = dark ? DARK_BORDER : new Color(223, 228, 235);
-        try { UIManager.setLookAndFeel("Sistema".equals(mode) ? UIManager.getSystemLookAndFeelClassName() : UIManager.getCrossPlatformLookAndFeelClassName()); }
+        // Use the same Swing delegate for every mode. Native Windows controls can
+        // ignore custom colors, which makes the app palette appear mixed.
+        try { UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName()); }
         catch (Exception ignored) { }
         UIManager.put("Panel.background", panel); UIManager.put("Panel.foreground", foreground);
         UIManager.put("OptionPane.background", panel); UIManager.put("OptionPane.messageForeground", foreground);
@@ -51,12 +54,18 @@ public final class AppTheme {
         UIManager.put("TextField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("TextField.foreground", foreground);
         UIManager.put("PasswordField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("PasswordField.foreground", foreground);
         UIManager.put("Button.background", panel); UIManager.put("Button.foreground", foreground);
+        UIManager.put("Button.disabledText", dark ? new Color(135, 144, 157) : new Color(130, 140, 151));
         UIManager.put("List.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("List.foreground", foreground);
         UIManager.put("Table.background", panel); UIManager.put("Table.foreground", foreground);
         UIManager.put("ScrollPane.background", panel); UIManager.put("Viewport.background", panel);
+        UIManager.put("Menu.background", panel); UIManager.put("Menu.foreground", foreground);
+        UIManager.put("MenuItem.background", panel); UIManager.put("MenuItem.foreground", foreground);
+        UIManager.put("CheckBoxMenuItem.background", panel); UIManager.put("CheckBoxMenuItem.foreground", foreground);
+        UIManager.put("PopupMenu.background", panel); UIManager.put("PopupMenu.foreground", foreground);
+        UIManager.put("TitledBorder.titleColor", foreground);
         if (window != null) SwingUtilities.updateComponentTreeUI(window);
         if (header != null) header.setBackground(dark ? new Color(20, 25, 34) : new Color(23, 36, 54));
-        if (window instanceof javax.swing.JFrame frame) applyTree(frame.getContentPane(), header, panel, foreground, border, dark);
+        if (window instanceof RootPaneContainer root) applyTree(root.getContentPane(), header, panel, foreground, border, dark);
         if (window != null) window.repaint();
     }
 

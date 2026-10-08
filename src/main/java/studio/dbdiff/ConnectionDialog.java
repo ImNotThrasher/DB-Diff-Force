@@ -10,8 +10,9 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 final class ConnectionDialog extends JDialog {
     private Endpoint[] endpoints;
-    static Endpoint[] showDialog(JFrame owner) {
+    static Endpoint[] showDialog(JFrame owner, String theme) {
         ConnectionDialog dialog = new ConnectionDialog(owner);
+        AppTheme.apply(dialog, null, theme);
         dialog.setVisible(true);
         return dialog.endpoints;
     }
