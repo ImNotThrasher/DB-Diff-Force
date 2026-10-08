@@ -19,6 +19,11 @@ final class UiIcons {
     static final Ikon EXPORT = Material2AL.FILE_UPLOAD;
     static final Ikon SPLIT = Material2MZ.VIEW_COLUMN;
     static final Ikon UNIFIED = Material2MZ.VIEW_STREAM;
+    static final Ikon SEARCH = Material2MZ.SEARCH;
+    static final Ikon TABLE = Material2MZ.TABLE_VIEW;
+    static final Ikon VIEW = Material2MZ.PAGEVIEW;
+    static final Ikon PROCEDURE = Material2AL.CODE;
+    static final Ikon FUNCTION = Material2AL.FUNCTIONS;
 
     private UiIcons() { }
 

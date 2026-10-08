@@ -10,10 +10,10 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
-import java.awt.Insets;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.event.MouseEvent;
+import java.awt.Insets;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -69,6 +69,9 @@ public final class Main {
     private final DefaultListModel<Object> resultModel = new DefaultListModel<>();
     private final List<Object> allResultItems = new ArrayList<>();
     private final JTextField objectSearch = new JTextField();
+    private final JPanel objectSearchBox = new JPanel(new BorderLayout(6, 0));
+    private final JLabel objectSearchIcon = new JLabel(UiIcons.themed(UiIcons.SEARCH, 16));
+    private final List<JLabel> objectLegendMarkers = new ArrayList<>();
     private final JList<Object> resultList = new JList<>(resultModel) {
         @Override public String getToolTipText(MouseEvent event) {
             int index = locationToIndex(event.getPoint());
@@ -129,16 +132,21 @@ public final class Main {
         leftActions.add(layoutButton); leftActions.add(kinds); controls.add(objectsHeading, BorderLayout.WEST); controls.add(leftActions, BorderLayout.EAST);
         resultList.setCellRenderer(new ResultRenderer()); resultList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION); resultList.setFixedCellHeight(34); resultList.addListSelectionListener(this::selectResult); resultList.setToolTipText("");
         JScrollPane listScroll = new JScrollPane(resultList); listScroll.setBorder(BorderFactory.createLineBorder(new Color(223, 228, 235))); listScroll.getViewport().setBackground(Color.WHITE);
-        objectSearch.setToolTipText("Filtrar objetos por nombre o tipo");
+        objectSearch.setToolTipText("Buscar objetos por nombre o tipo");
+        objectSearch.getAccessibleContext().setAccessibleName("Buscar objetos");
+        objectSearch.setBorder(new EmptyBorder(5, 2, 5, 2));
+        objectSearchBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(223, 228, 235)), new EmptyBorder(1, 8, 1, 7)));
+        objectSearchBox.add(objectSearchIcon, BorderLayout.WEST); objectSearchBox.add(objectSearch, BorderLayout.CENTER);
         objectSearch.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override public void insertUpdate(javax.swing.event.DocumentEvent event) { applyResultFilter(); }
             @Override public void removeUpdate(javax.swing.event.DocumentEvent event) { applyResultFilter(); }
             @Override public void changedUpdate(javax.swing.event.DocumentEvent event) { applyResultFilter(); }
         });
         JPanel listTop = new JPanel(); listTop.setOpaque(false); listTop.setLayout(new BoxLayout(listTop, BoxLayout.Y_AXIS));
-        listTop.add(objectSearch); listTop.add(Box.createVerticalStrut(5)); listTop.add(objectColumnsHeader());
+        listTop.add(objectSearchBox); listTop.add(Box.createVerticalStrut(5)); listTop.add(objectColumnsHeader());
         JPanel listArea = new JPanel(new BorderLayout(0, 4)); listArea.setOpaque(false); listArea.add(listTop, BorderLayout.NORTH); listArea.add(listScroll, BorderLayout.CENTER);
-        JLabel legend = new JLabel("  Verde: igual    Ámbar: modificado    Azul / gris: falta en un lado"); legend.setFont(new Font("Segoe UI", Font.PLAIN, 10)); legend.setForeground(new Color(105, 118, 136));
+        JPanel legend = objectStatusLegend();
         left.add(controls, BorderLayout.NORTH); left.add(listArea, BorderLayout.CENTER); left.add(legend, BorderLayout.SOUTH);
         JPanel right = new JPanel(new BorderLayout(0, 8)); right.setBorder(new EmptyBorder(15, 12, 15, 16)); right.setBackground(Color.WHITE);
         right.add(comparisonView, BorderLayout.CENTER);
@@ -209,9 +217,26 @@ public final class Main {
     private JPanel objectColumnsHeader() {
         JPanel header = new JPanel(new BorderLayout()); header.setOpaque(false);
         JLabel name = new JLabel("NOMBRE"); name.setFont(new Font("Segoe UI", Font.BOLD, 10)); name.setForeground(new Color(105, 118, 136));
-        JLabel type = new JLabel("TIPO", JLabel.LEFT); type.setFont(name.getFont()); type.setForeground(name.getForeground()); type.setPreferredSize(new Dimension(94, 22));
+        JLabel type = new JLabel("TIPO", JLabel.LEFT); type.setFont(name.getFont()); type.setForeground(name.getForeground()); type.setPreferredSize(new Dimension(120, 22));
         header.setBorder(new EmptyBorder(2, 26, 2, 6)); header.add(name, BorderLayout.CENTER); header.add(type, BorderLayout.EAST);
         return header;
+    }
+
+    private JPanel objectStatusLegend() {
+        JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0)); legend.setOpaque(false);
+        addLegendItem(legend, "●", "Igual", new Color(49, 130, 97));
+        addLegendItem(legend, "●", "Modificado", new Color(178, 112, 24));
+        addLegendItem(legend, "◀", "Solo origen", new Color(56, 112, 184));
+        addLegendItem(legend, "▶", "Solo destino", new Color(111, 122, 140));
+        return legend;
+    }
+
+    private void addLegendItem(JPanel legend, String symbol, String description, Color color) {
+        JLabel marker = new JLabel(symbol); marker.setFont(new Font("Segoe UI", Font.BOLD, 11)); marker.setForeground(color);
+        objectLegendMarkers.add(marker);
+        JLabel text = new JLabel(description); text.setFont(new Font("Segoe UI", Font.PLAIN, 10)); text.setForeground(new Color(105, 118, 136));
+        JPanel item = new JPanel(new BorderLayout(3, 0)); item.setOpaque(false); item.add(marker, BorderLayout.WEST); item.add(text, BorderLayout.CENTER);
+        legend.add(item);
     }
 
     private void setResultItems(List<?> items) {
@@ -388,7 +413,16 @@ public final class Main {
 
     private void applyTheme() {
         AppTheme.apply(frame, headerPanel, theme);
-        comparisonView.setThemeColors(AppTheme.isDark(theme));
+        boolean dark = AppTheme.isDark(theme);
+        comparisonView.setThemeColors(dark);
+        ThemePalette palette = ThemePalette.forMode(dark);
+        objectSearchBox.setBackground(palette.panel());
+        objectSearchBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(palette.border()), new EmptyBorder(1, 8, 1, 7)));
+        objectSearchIcon.setForeground(palette.foreground());
+        Color[] lightLegendColors = {new Color(49, 130, 97), new Color(178, 112, 24), new Color(56, 112, 184), new Color(111, 122, 140)};
+        Color[] darkLegendColors = {new Color(111, 204, 148), new Color(230, 174, 85), new Color(107, 166, 239), new Color(154, 166, 181)};
+        for (int i = 0; i < objectLegendMarkers.size(); i++) objectLegendMarkers.get(i).setForeground(dark ? darkLegendColors[i] : lightLegendColors[i]);
     }
 
     private static final class ResultRenderer extends JPanel implements ListCellRenderer<Object> {
@@ -399,7 +433,7 @@ public final class Main {
         ResultRenderer() {
             super(new BorderLayout(4, 0));
             marker.setPreferredSize(new Dimension(18, 20));
-            type.setPreferredSize(new Dimension(94, 20));
+        type.setPreferredSize(new Dimension(120, 20));
             add(marker, BorderLayout.WEST); add(name, BorderLayout.CENTER); add(type, BorderLayout.EAST);
             setBorder(new EmptyBorder(5, 6, 5, 6));
             name.setFont(new Font("Segoe UI", Font.PLAIN, 12));
@@ -413,8 +447,15 @@ public final class Main {
             Color foreground = selected ? list.getSelectionForeground() : list.getForeground();
             setBackground(selected ? list.getSelectionBackground() : list.getBackground());
             name.setForeground(foreground); type.setForeground(selected ? foreground : new Color(105, 118, 136));
-            marker.setForeground(selected ? foreground : markerColor(value));
+            marker.setForeground(selected ? foreground : markerColor(value, list.getBackground().getRed() < 90));
             marker.setText(markerText(value));
+            type.setIcon(switch (key.kind()) {
+                case TABLE -> UiIcons.themed(UiIcons.TABLE, 14);
+                case VIEW -> UiIcons.themed(UiIcons.VIEW, 14);
+                case PROCEDURE -> UiIcons.themed(UiIcons.PROCEDURE, 14);
+                case FUNCTION -> UiIcons.themed(UiIcons.FUNCTION, 14);
+            });
+            type.setIconTextGap(4);
             return this;
         }
 
@@ -446,17 +487,17 @@ public final class Main {
             };
         }
 
-        private static Color markerColor(Object value) {
+        private static Color markerColor(Object value, boolean dark) {
             if (value instanceof CatalogItem catalog) {
-                if (!catalog.sourcePresent()) return new Color(56, 112, 184);
-                if (!catalog.targetPresent()) return new Color(111, 122, 140);
-                return new Color(105, 118, 136);
+                if (!catalog.sourcePresent()) return dark ? new Color(107, 166, 239) : new Color(56, 112, 184);
+                if (!catalog.targetPresent()) return dark ? new Color(154, 166, 181) : new Color(111, 122, 140);
+                return dark ? new Color(154, 166, 181) : new Color(105, 118, 136);
             }
             return switch (((DiffEngine.Result) value).status()) {
-                case IDENTICAL -> new Color(49, 130, 97);
-                case CHANGED -> new Color(178, 112, 24);
-                case SOURCE_ONLY -> new Color(56, 112, 184);
-                case TARGET_ONLY -> new Color(111, 122, 140);
+                case IDENTICAL -> dark ? new Color(111, 204, 148) : new Color(49, 130, 97);
+                case CHANGED -> dark ? new Color(230, 174, 85) : new Color(178, 112, 24);
+                case SOURCE_ONLY -> dark ? new Color(107, 166, 239) : new Color(56, 112, 184);
+                case TARGET_ONLY -> dark ? new Color(154, 166, 181) : new Color(111, 122, 140);
             };
         }
     }
