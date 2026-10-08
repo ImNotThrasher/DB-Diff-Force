@@ -70,7 +70,7 @@ public final class Main {
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
     private DatabaseConnector source, target;
-    private String targetDatabase = "";
+    private String sourceDatabase = "", targetDatabase = "";
     private List<SchemaObject> sourceObjects = List.of(), targetObjects = List.of();
     private boolean compared;
     private boolean stackedLayout;
@@ -146,7 +146,7 @@ public final class Main {
             try {
                 a.connect(endpoints[0]); b.connect(endpoints[1]);
                 List<SchemaObject> ao = a.listObjects(), bo = b.listObjects();
-                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; targetDatabase = endpoints[1].database(); sourceObjects = ao; targetObjects = bo; compared = false; comparedKeys.clear(); showCatalog(); setBusy(false, "Conectado · Origen: " + endpoints[0].database() + " · Destino: " + endpoints[1].database() + " · " + ao.size() + " / " + bo.size() + " objetos encontrados · sin comparar"); });
+                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; sourceDatabase = endpoints[0].database(); targetDatabase = endpoints[1].database(); comparisonView.setDatabases(sourceDatabase, targetDatabase); sourceObjects = ao; targetObjects = bo; compared = false; comparedKeys.clear(); showCatalog(); setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos encontrados · sin comparar"); });
             } catch (SQLException | RuntimeException ex) { a.close(); b.close(); SwingUtilities.invokeLater(() -> { setBusy(false, "Error de conexión"); error("No se pudo conectar", ex); }); }
             finally { endpoints[0].clearPassword(); endpoints[1].clearPassword(); }
         });

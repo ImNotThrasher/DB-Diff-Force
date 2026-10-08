@@ -14,6 +14,7 @@ import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JViewport;
+import javax.swing.JToggleButton;
 import javax.swing.RootPaneContainer;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -102,6 +103,9 @@ public final class AppTheme {
             boolean primary = Boolean.TRUE.equals(button.getClientProperty("dbdiff.primary"));
             button.setBackground(primary ? new Color(61, 117, 207) : panel); button.setForeground(primary ? Color.WHITE : foreground);
             if (!primary) button.setBorder(javax.swing.BorderFactory.createCompoundBorder(javax.swing.BorderFactory.createLineBorder(border), javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        } else if (node instanceof JToggleButton button) {
+            button.setBackground(button.isSelected() ? (dark ? new Color(57, 78, 105) : new Color(190, 211, 235)) : panel);
+            button.setForeground(foreground);
         } else if (node instanceof JCheckBox check) {
             check.setBackground(panel); check.setForeground(foreground);
         } else if (node instanceof JComboBox<?> combo) {
