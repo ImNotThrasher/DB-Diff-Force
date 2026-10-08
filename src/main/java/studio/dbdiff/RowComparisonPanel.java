@@ -101,6 +101,8 @@ final class RowComparisonPanel extends JPanel {
             empty.setForeground(ThemePalette.forMode(dark).foreground());
             resultContent.removeAll(); resultContent.add(empty, BorderLayout.CENTER);
         } else {
+            // La grilla superior resume cada registro cambiado; la inferior se
+            // completa al elegir una fila y muestra los campos que explican el cambio.
             String[] headers = {"Estado", "Clave primaria", "Detalle"};
             Object[][] data = new Object[result.changes().size()][headers.length];
             for (int i = 0; i < result.changes().size(); i++) {
@@ -238,6 +240,8 @@ final class RowComparisonPanel extends JPanel {
         int selected = changesTable.getSelectedRow();
         if (selected < 0 || selected >= rows.changes().size()) return;
         RowDiff.RowChange change = rows.changes().get(selected);
+        // En registros emparejados se ocultan campos iguales; para registros
+        // exclusivos se muestran todas las columnas del lado que existe.
         List<RowDiff.Column> columns = rows.columns().stream()
                 .filter(column -> change.status() != RowDiff.Status.DIFFERENT
                         || !Objects.deepEquals(change.source().get(column.name()), change.target().get(column.name())))

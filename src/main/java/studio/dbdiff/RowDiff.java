@@ -2,6 +2,7 @@ package studio.dbdiff;
 
 import java.util.*;
 
+/** Immutable result model shared by database comparison and the Swing view. */
 public final class RowDiff {
     private RowDiff() { }
     public enum Status { SOURCE_ONLY, TARGET_ONLY, DIFFERENT }
@@ -15,11 +16,13 @@ public final class RowDiff {
         }
     }
     public record RowChange(Status status, Map<String, Object> key, Map<String, Object> source, Map<String, Object> target) {
+        /** Copy JDBC row maps so the UI and exporter cannot observe cursor changes. */
         public RowChange { key = immutable(key); source = immutable(source); target = immutable(target); }
         private static Map<String, Object> immutable(Map<String, Object> values) { return values == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(values)); }
     }
     public record Result(String targetDatabase, SchemaObject.Key table, List<Column> columns, List<Column> primaryKey, List<RowChange> changes,
                          long sourceOnly, long targetOnly, long different, long matchedRows, boolean truncated, String warning) {
+        /** Freeze collections before the worker result is handed to Swing's EDT. */
         public Result { columns = List.copyOf(columns); primaryKey = List.copyOf(primaryKey); changes = List.copyOf(changes); }
     }
 }

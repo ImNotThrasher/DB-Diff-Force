@@ -102,6 +102,8 @@ final class DiffCodeEditor extends JPanel {
         @Override public boolean getScrollableTracksViewportWidth() { return false; }
 
         void applyLineColors(List<DiffEngine.DiffLine> rows, boolean dark) {
+            // El color de párrafo marca toda la línea y se fija también el texto
+            // para conservar el contraste en ambos temas.
             ThemePalette palette = ThemePalette.forMode(dark);
             setBackground(palette.editor());
             setForeground(palette.foreground());
@@ -126,6 +128,8 @@ final class DiffCodeEditor extends JPanel {
         }
 
         @Override protected void paintComponent(Graphics graphics) {
+            // Pintar el fondo antes del texto mantiene el resaltado continuo
+            // incluso cuando una línea supera el ancho visible del editor.
             Graphics2D g = (Graphics2D) graphics.create();
             ThemePalette palette = ThemePalette.forMode(dark);
             g.setColor(palette.editor());
@@ -174,6 +178,8 @@ final class DiffCodeEditor extends JPanel {
         }
 
         @Override protected void paintComponent(Graphics graphics) {
+            // El margen usa las mismas filas visuales del editor para que números
+            // y marcadores acompañen el desplazamiento del texto.
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g.setColor(palette.gutterBackground());

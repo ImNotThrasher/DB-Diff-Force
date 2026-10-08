@@ -208,6 +208,8 @@ public final class Main {
         List<SchemaObject> sourceCatalog = sourceObjects, targetCatalog = targetObjects;
         DatabaseConnector sourceConnector = source, targetConnector = target;
         setBusy(true, "Comparando los tipos de objetos seleccionados…");
+        // Las lecturas JDBC y el diff corren fuera del EDT. El contador invalida
+        // respuestas viejas si el usuario inicia otra comparación mientras tanto.
         worker.submit(() -> {
             try {
                 List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, loadedA), b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, loadedB);
@@ -227,6 +229,8 @@ public final class Main {
 
     private static List<SchemaObject> loadSelected(DatabaseConnector connector, List<SchemaObject> catalog, Set<SchemaObject.Kind> kinds,
                                                    Set<SchemaObject.Key> selected, Set<SchemaObject.Key> cachedKeys) throws SQLException {
+        // El catálogo solo trae nombres; las definiciones se cargan bajo demanda y
+        // las ya leídas se reutilizan para evitar consultas repetidas al servidor.
         List<SchemaObject> result = new ArrayList<>();
         for (SchemaObject object : catalog) if (kinds.contains(object.key().kind()) && (selected.isEmpty() || selected.contains(object.key())))
             result.add(cachedKeys.contains(object.key()) ? object : connector.loadObject(object.key()));
@@ -386,12 +390,16 @@ public final class Main {
         DatabaseConnector sourceConnector = source, targetConnector = target;
         rowComparisonPanel.showLoading(selected.key().name());
         setBusy(true, "Leyendo las filas de " + selected.key().name() + "…");
+        // Consultar en el worker evita bloquear Swing; el token descarta respuestas
+        // antiguas si el usuario seleccionó otra tabla antes de terminar.
         worker.submit(() -> {
             try {
                 RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), 10000);
                 SwingUtilities.invokeLater(() -> {
                     if (request != rowComparisonRequest || !isSelected(selected.key())) return;
                     try {
+                        // La consulta pudo terminar bien aunque la vista falle; dar
+                        // un mensaje explícito evita dejar el panel en “Comparando”.
                         rowComparisonPanel.showResult(rows);
                         setBusy(false, rowSummary(rows));
                     } catch (RuntimeException renderError) {
@@ -429,6 +437,8 @@ public final class Main {
         comparisonView.showMessage("Cargando y comparando la definición de " + key.name() + "…");
         connectionStatus.setText("Leyendo definición de " + key.name() + " en segundo plano…");
         DatabaseConnector sourceConnector = source, targetConnector = target;
+        // Se carga el DDL al seleccionar el objeto y se conserva en caché aunque
+        // la selección cambie durante la consulta.
         worker.submit(() -> {
             try {
                 SchemaObject a = catalog.sourcePresent() ? sourceConnector.loadObject(key) : null;

@@ -138,11 +138,15 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         String order = primaryKey.stream().map(c -> isText(c.type()) ? "CAST(" + quote(c.name()) + " AS BINARY)" : quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
         String query = "SELECT " + columnsSql + " FROM " + quote(database) + "." + quote(key.name()) + " ORDER BY " + order;
         String peerQuery = "SELECT " + columnsSql + " FROM " + quote(peer.database) + "." + quote(key.name()) + " ORDER BY " + order;
-        List<RowDiff.RowChange> changes = new ArrayList<>(); long[] counts = new long[4]; boolean truncated = false;
+        List<RowDiff.RowChange> changes = new ArrayList<>();
+        // Índices: 0 solo origen, 1 solo destino, 2 distintas, 3 claves emparejadas.
+        long[] counts = new long[4]; boolean truncated = false;
         try (PreparedStatement left = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
              PreparedStatement right = peer.connection.prepareStatement(peerQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
             left.setFetchSize(500); right.setFetchSize(500);
             try (ResultSet a = left.executeQuery(); ResultSet b = right.executeQuery()) {
+                // Ambos cursores llegan ordenados por clave. Avanzarlos como una
+                // fusión evita cargar las tablas completas en memoria.
                 boolean hasA = a.next(), hasB = b.next();
                 while (hasA || hasB) {
                     Map<String, Object> rowA = hasA ? readRow(a, columns) : null;
@@ -206,11 +210,14 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     }
     private static Map<String, Object> keyOf(Map<String, Object> row, List<RowDiff.Column> keys) { Map<String, Object> result = new LinkedHashMap<>(); for (RowDiff.Column key : keys) result.put(key.name(), row.get(key.name())); return result; }
     private static int compareKeys(Map<String, Object> a, Map<String, Object> b, List<RowDiff.Column> keys) throws SQLException {
+        // La clave compuesta, en el orden de la metadata, determina qué cursor avanza.
         for (RowDiff.Column key : keys) { int c = compareValue(a.get(key.name()), b.get(key.name()), key.type()); if (c != 0) return c; } return 0;
     }
     private static int compareValue(Object a, Object b, String type) throws SQLException {
         if (a == null || b == null) { if (a == b) return 0; throw new SQLException("Primary key unexpectedly contains NULL."); }
         if (Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric").contains(type)) return new java.math.BigDecimal(a.toString()).compareTo(new java.math.BigDecimal(b.toString()));
+        // Para texto, el ORDER BY SQL usa CAST(... AS BINARY); comparar bytes
+        // UTF-8 acá mantiene el mismo orden sin depender de la collation.
         if (isText(type)) return compareUtf8(a.toString(), b.toString());
         return canonical(a, type).compareTo(canonical(b, type));
     }
@@ -221,6 +228,8 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     }
     private static String canonical(Object value, String type) { return value instanceof byte[] bytes ? Base64.getEncoder().encodeToString(bytes) : value.toString(); }
     private static boolean rowsEqual(Map<String, Object> a, Map<String, Object> b, List<RowDiff.Column> columns) {
+        // Normalizar valores JDBC evita falsos cambios entre tipos equivalentes
+        // como BigDecimal y permite comparar valores binarios.
         for (RowDiff.Column column : columns) if (!Objects.deepEquals(canonicalObject(a.get(column.name())), canonicalObject(b.get(column.name())))) return false; return true;
     }
     private static Object canonicalObject(Object value) {

@@ -29,6 +29,8 @@ public final class DiffEngine {
 
     private static List<DiffLine> unified(String before, String after) {
         String[] a = before.split("\n", -1), b = after.split("\n", -1);
+        // LCS conserva el orden de las líneas comunes y permite asignar a cada
+        // cambio su número real en origen o destino. Tiempo y memoria son O(n*m).
         int n = a.length, m = b.length; int[][] lcs = new int[n + 1][m + 1];
         for (int i = n - 1; i >= 0; i--) for (int j = m - 1; j >= 0; j--)
             lcs[i][j] = a[i].equals(b[j]) ? 1 + lcs[i + 1][j + 1] : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
@@ -47,6 +49,8 @@ public final class DiffEngine {
     }
 
     private static List<DiffLine> oneSided(String definition, boolean targetOnly) {
+        // Si el objeto existe en una sola base, todas sus líneas son altas o
+        // bajas y el margen deja vacío el número del lado ausente.
         String[] lines = definition.split("\n", -1);
         List<DiffLine> result = new ArrayList<>(lines.length);
         for (int i = 0; i < lines.length; i++) result.add(targetOnly
