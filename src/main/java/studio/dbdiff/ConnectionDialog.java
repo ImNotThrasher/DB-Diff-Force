@@ -45,6 +45,7 @@ final class ConnectionDialog extends JDialog {
     private final boolean[] changingSavedChoice = new boolean[2];
     private final boolean[] updatingDatabaseChoice = new boolean[2];
     private final boolean[] testedSuccessfully = new boolean[2];
+    private boolean applyingSavedProfile;
     private final int[] testGenerations = new int[2];
     private final String[] preferredDatabase = new String[2];
     private boolean autoConnectRequested;
@@ -59,6 +60,7 @@ final class ConnectionDialog extends JDialog {
         super(owner, "Nueva comparación", true);
         setLayout(new BorderLayout(10, 10));
         engine.addActionListener(e -> {
+            if (applyingSavedProfile) return;
             String port = Integer.toString(((DatabaseEngine) engine.getSelectedItem()).defaultPort());
             for (int i = 0; i < 2; i++) { fields[i][1].setText(port); invalidateTest(i); }
         });
@@ -192,8 +194,23 @@ final class ConnectionDialog extends JDialog {
 
     private void applyProfile(int side, ConnectionProfile profile) {
         if (profile == null) return;
-        engine.setSelectedItem(profile.engine());
-        fields[side][0].setText(profile.host()); fields[side][1].setText(Integer.toString(profile.port())); fields[side][2].setText(profile.user());
+        DatabaseEngine previousEngine = (DatabaseEngine) engine.getSelectedItem();
+        applyingSavedProfile = true;
+        try {
+            engine.setSelectedItem(profile.engine());
+            if (previousEngine != profile.engine()) {
+                String defaultPort = Integer.toString(profile.engine().defaultPort());
+                for (int endpoint = 0; endpoint < fields.length; endpoint++) {
+                    if (endpoint != side) fields[endpoint][1].setText(defaultPort);
+                    invalidateTest(endpoint);
+                }
+            }
+            fields[side][0].setText(profile.host());
+            fields[side][1].setText(Integer.toString(profile.port()));
+            fields[side][2].setText(profile.user());
+        } finally {
+            applyingSavedProfile = false;
+        }
         passwords[side].setText(""); tls[side].setSelected(profile.useTls()); rememberPasswords[side].setSelected(profile.rememberPassword());
         if (profile.rememberPassword()) {
             try {

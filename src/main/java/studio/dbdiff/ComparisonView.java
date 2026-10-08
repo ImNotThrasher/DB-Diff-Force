@@ -48,7 +48,14 @@ public final class ComparisonView extends JPanel {
     }
 
     public void setDatabases(String sourceName, String targetName) {
-        databasePair.setText("Base origen: " + displayName(sourceName) + "   →   Base destino: " + displayName(targetName));
+        setDatabases(sourceName, targetName, "", "");
+    }
+
+    public void setDatabases(String sourceName, String targetName, String sourceServer, String targetServer) {
+        String source = endpointName(sourceServer, sourceName);
+        String target = endpointName(targetServer, targetName);
+        databasePair.setText("Base origen: " + source + "   →   Base destino: " + target);
+        databasePair.setToolTipText(databasePair.getText());
         sourceHeading.setText("ORIGEN · " + displayName(sourceName));
         targetHeading.setText("DESTINO · " + displayName(targetName));
     }
@@ -120,6 +127,11 @@ public final class ComparisonView extends JPanel {
     }
 
     private static String displayName(String name) { return name == null || name.isBlank() ? "(sin seleccionar)" : name; }
+
+    private static String endpointName(String server, String database) {
+        String name = displayName(database);
+        return server == null || server.isBlank() ? name : server + " / " + name;
+    }
 
     private static JPanel titled(JLabel heading, DiffCodeEditor editor) {
         JPanel panel = new JPanel(new BorderLayout()); heading.setFont(new Font("Segoe UI", Font.BOLD, 11)); heading.setBorder(new EmptyBorder(0, 0, 6, 0));

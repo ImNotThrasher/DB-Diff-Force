@@ -270,7 +270,9 @@ public final class Main {
                     schemaEngine = prepared.engine();
                     sourceDatabase = prepared.sourceName(); targetDatabase = prepared.targetName();
                     sourceObjects = prepared.sourceObjects(); targetObjects = prepared.targetObjects();
-                    comparisonView.setDatabases(sourceDatabase, targetDatabase);
+                    String sourceServer = selection.mode() == ConnectionDialog.SourceMode.DATABASE
+                            ? endpointAddress(selection.origin()) : "";
+                    comparisonView.setDatabases(sourceDatabase, targetDatabase, sourceServer, endpointAddress(selection.destination()));
                     loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
                     compared = false; comparedKeys.clear(); rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
                     showCatalog(); setConnectionAvailable(true); refreshDependencyStatus();
@@ -330,6 +332,10 @@ public final class Main {
             if (destinationConnection != null) destinationConnection.close();
             throw ex;
         }
+    }
+
+    private static String endpointAddress(Endpoint endpoint) {
+        return endpoint.host() + ":" + endpoint.port();
     }
 
     private record PreparedComparison(SchemaSource source, DatabaseConnector target,
