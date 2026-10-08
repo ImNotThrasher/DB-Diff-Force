@@ -10,7 +10,6 @@ import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
-import java.io.IOException;
 import java.util.List;
 import javax.imageio.ImageIO;
 
@@ -53,32 +52,20 @@ final class BrandMark implements Icon {
             int drawHeight = (int) Math.round(LOGO.getHeight() * scale);
             int x = (width - drawWidth) / 2;
             int y = (height - drawHeight) / 2;
-            graphics.drawImage(LOGO, x, y, drawWidth, drawHeight, null);
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.drawImage(LOGO, x, y, drawWidth, drawHeight, null);
+            g.dispose();
             return;
         }
         paintFallback(graphics, width, height);
     }
 
-    /** Load the transparent brand asset and crop its unused transparent border. */
+    /** Keep the source canvas intact so its original aspect ratio is never altered. */
     private static BufferedImage loadLogo() {
         try (var input = BrandMark.class.getResourceAsStream("/studio/dbdiff/brand-mark.png")) {
-            if (input == null) return null;
-            BufferedImage source = ImageIO.read(input);
-            if (source == null) return null;
-            int left = source.getWidth(), top = source.getHeight(), right = -1, bottom = -1;
-            for (int y = 0; y < source.getHeight(); y++) for (int x = 0; x < source.getWidth(); x++) {
-                if ((source.getRGB(x, y) >>> 24) == 0) continue;
-                left = Math.min(left, x); top = Math.min(top, y);
-                right = Math.max(right, x); bottom = Math.max(bottom, y);
-            }
-            if (right < left || bottom < top) return source;
-            BufferedImage cropped = new BufferedImage(right - left + 1, bottom - top + 1, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D graphics = cropped.createGraphics();
-            graphics.drawImage(source, 0, 0, cropped.getWidth(), cropped.getHeight(),
-                    left, top, right + 1, bottom + 1, null);
-            graphics.dispose();
-            return cropped;
-        } catch (IOException ignored) {
+            return input == null ? null : ImageIO.read(input);
+        } catch (java.io.IOException ignored) {
             return null;
         }
     }

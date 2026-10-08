@@ -687,7 +687,7 @@ public final class Main {
         JCheckBox[] checks = new JCheckBox[3]; JPanel choices = new JPanel(new GridLayout(0, 1));
         JCheckBox transaction = new JCheckBox("Envolver el script en START TRANSACTION / COMMIT");
         JCheckBox dropIfExists = new JCheckBox("Usar DROP IF EXISTS al eliminar objetos o reemplazar rutinas");
-        dropIfExists.setToolTipText("Evita errores si un objeto a eliminar o una rutina a reemplazar ya no existe.");
+        dropIfExists.setToolTipText("Solo evita errores si ya no existe. DROP TABLE IF EXISTS igualmente elimina la tabla y sus datos si está presente.");
         Runnable refreshPreview = () -> {
             preview.setText(SqlExporter.export(exportResults, ops, targetDatabase, transaction.isSelected(), dropIfExists.isSelected()));
             preview.setCaretPosition(0);
