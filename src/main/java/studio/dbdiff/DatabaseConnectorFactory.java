@@ -8,6 +8,7 @@ public final class DatabaseConnectorFactory {
         return switch (endpoint.engine()) {
             case MARIADB -> new MariaDbConnector();
             case MYSQL -> new MySqlConnector();
+            case SQLSERVER -> new SqlServerConnector();
         };
     }
 }

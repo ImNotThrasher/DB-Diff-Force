@@ -53,6 +53,7 @@ import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
+import javax.swing.JProgressBar;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
@@ -87,12 +88,14 @@ public final class Main {
     private final RowComparisonPanel rowComparisonPanel = new RowComparisonPanel((rows, options) ->
             saveRowSql(rows, options.inserts(), options.updates(), options.deletes()), this::rowPanelExpanded);
     private final JLabel connectionStatus = new JLabel("Sin conexión");
+    private final JProgressBar activityIndicator = new JProgressBar();
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
     private DatabaseConnector source, target;
     private DatabaseEngine schemaEngine = DatabaseEngine.MARIADB;
     private String sourceDatabase = "", targetDatabase = "";
     private List<SchemaObject> sourceObjects = List.of(), targetObjects = List.of();
     private boolean compared;
+    private boolean schemaComparisonRunning;
     private boolean stackedLayout;
     private String theme = "Sistema";
     private int codeFontSize = 13;
@@ -190,7 +193,17 @@ public final class Main {
         return split;
     }
 
-    private JComponent statusBar() { JPanel p = new JPanel(new BorderLayout()); p.setBorder(new EmptyBorder(7, 16, 7, 16)); p.setBackground(new Color(247, 249, 252)); p.add(connectionStatus); connectionStatus.setFont(new Font("Segoe UI", Font.PLAIN, 11)); connectionStatus.setForeground(new Color(88, 101, 120)); return p; }
+    private JComponent statusBar() {
+        JPanel p = new JPanel(new BorderLayout(12, 0));
+        p.setBorder(new EmptyBorder(7, 16, 7, 16)); p.setBackground(new Color(247, 249, 252));
+        p.add(connectionStatus, BorderLayout.CENTER);
+        activityIndicator.setIndeterminate(true); activityIndicator.setBorderPainted(false);
+        activityIndicator.setPreferredSize(new Dimension(130, 12)); activityIndicator.setVisible(false);
+        activityIndicator.setToolTipText("La operación sigue ejecutándose en segundo plano.");
+        p.add(activityIndicator, BorderLayout.EAST);
+        connectionStatus.setFont(new Font("Segoe UI", Font.PLAIN, 11)); connectionStatus.setForeground(new Color(88, 101, 120));
+        return p;
+    }
     private JTextArea area() {
         JTextArea area = new JTextArea(); area.setEditable(false);
         area.setFont(DiffCodeEditor.codeFont(codeFontFamily, codeFontSize));
@@ -218,6 +231,7 @@ public final class Main {
             return;
         }
         comparisonRequest++; selectionRequest++; rowComparisonRequest++;
+        schemaComparisonRunning = false;
         setBusy(true, "Conectando y leyendo las listas de objetos…");
         worker.submit(() -> {
             DatabaseConnector a = DatabaseConnectorFactory.create(endpoints[0]), b = DatabaseConnectorFactory.create(endpoints[1]);
@@ -240,6 +254,7 @@ public final class Main {
         Set<SchemaObject.Key> loadedA = Set.copyOf(loadedSourceKeys), loadedB = Set.copyOf(loadedTargetKeys);
         List<SchemaObject> sourceCatalog = sourceObjects, targetCatalog = targetObjects;
         DatabaseConnector sourceConnector = source, targetConnector = target;
+        schemaComparisonRunning = true;
         setBusy(true, "Comparando los tipos de objetos seleccionados…");
         // Las lecturas JDBC y el diff corren fuera del EDT. El contador invalida
         // respuestas viejas si el usuario inicia otra comparación mientras tanto.
@@ -249,6 +264,7 @@ public final class Main {
                 List<DiffEngine.Result> results = new DiffEngine().compare(a, b, kinds, selectedKeys);
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) return;
+                    schemaComparisonRunning = false;
                     sourceObjects = mergeLoaded(sourceObjects, a); targetObjects = mergeLoaded(targetObjects, b);
                     a.forEach(o -> loadedSourceKeys.add(o.key())); b.forEach(o -> loadedTargetKeys.add(o.key()));
                     compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results);
@@ -256,7 +272,7 @@ public final class Main {
                     if (selectedKeys.size() == 1 && !results.isEmpty()) resultList.setSelectedValue(results.get(0), true);
                     setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios");
                 });
-            } catch (SQLException ex) { SwingUtilities.invokeLater(() -> { if (request != comparisonRequest) return; setBusy(false, "Error al comparar"); error("No se pudieron leer las definiciones del esquema", ex); }); }
+            } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> { if (request != comparisonRequest) return; schemaComparisonRunning = false; setBusy(false, "Error al comparar"); error("No se pudieron leer las definiciones del esquema", ex); }); }
         });
     }
 
@@ -397,10 +413,10 @@ public final class Main {
         Comparator<Object> comparator = switch (objectSortColumn) {
             case 0 -> Comparator.comparingInt(Main::objectStatusRank);
             case 2 -> Comparator.comparing(item -> kindName(objectKey(item).kind()), String.CASE_INSENSITIVE_ORDER);
-            default -> Comparator.comparing(item -> objectKey(item).name(), String.CASE_INSENSITIVE_ORDER);
+            default -> Comparator.comparing(item -> objectKey(item).qualifiedName(), String.CASE_INSENSITIVE_ORDER);
         };
         if (!objectSortAscending) comparator = comparator.reversed();
-        items.sort(comparator.thenComparing(item -> objectKey(item).name(), String.CASE_INSENSITIVE_ORDER));
+        items.sort(comparator.thenComparing(item -> objectKey(item).qualifiedName(), String.CASE_INSENSITIVE_ORDER));
     }
 
     private static int objectStatusRank(Object item) {
@@ -418,7 +434,7 @@ public final class Main {
     }
 
     private static boolean matchesObjectSearch(Object item, String query) {
-        return query.isEmpty() || (objectKey(item).name() + " " + kindName(objectKey(item).kind()))
+        return query.isEmpty() || (objectKey(item).qualifiedName() + " " + kindName(objectKey(item).kind()))
                 .toLowerCase(Locale.ROOT).contains(query);
     }
 
@@ -447,7 +463,7 @@ public final class Main {
         rowComparisonPanel.clearResult(false);
         if (resultList.getSelectedValuesList().size() > 1) { setBusy(false, "Varios objetos seleccionados"); comparisonView.showMessage("Seleccionaste varios objetos. Elegí Comparar para analizarlos o seleccioná un resultado para ver sus detalles."); if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("Seleccioná una sola tabla para comparar filas."); return; }
         Object item = resultList.getSelectedValue();
-        if (item != null) setBusy(false, "Objeto seleccionado · " + objectKey(item).name());
+        if (item != null) setBusy(false, "Objeto seleccionado · " + objectKey(item).qualifiedName());
         if (item instanceof CatalogItem catalog) { loadCatalogSelection(catalog, request); return; }
         if (!(item instanceof DiffEngine.Result selected)) { if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("Seleccioná una tabla para comparar sus filas."); return; }
         selectedSchemaResult = selected;
@@ -489,8 +505,8 @@ public final class Main {
         }
         long request = ++rowComparisonRequest;
         DatabaseConnector sourceConnector = source, targetConnector = target;
-        rowComparisonPanel.showLoading(selected.key().name());
-        setBusy(true, "Leyendo las filas de " + selected.key().name() + "…");
+        rowComparisonPanel.showLoading(selected.key().qualifiedName());
+        setBusy(true, "Leyendo las filas de " + selected.key().qualifiedName() + "…");
         // Consultar en el worker evita bloquear Swing; el token descarta respuestas
         // antiguas si el usuario seleccionó otra tabla antes de terminar.
         worker.submit(() -> {
@@ -528,15 +544,15 @@ public final class Main {
             DiffEngine.Result result = compareLoadedObject(catalog);
             selectedSchemaResult = result;
             comparisonView.showResult(result, AppTheme.isDark(theme));
-            connectionStatus.setText("Definición comparada · " + key.name());
+            connectionStatus.setText("Definición comparada · " + key.qualifiedName());
             if (rowComparisonPanel.isExpanded() && key.kind() == SchemaObject.Kind.TABLE) startRowComparison(result);
             else if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("La comparación de filas está disponible para tablas.");
             return;
         }
-        if (rowComparisonPanel.isExpanded() && key.kind() == SchemaObject.Kind.TABLE) rowComparisonPanel.showLoading(key.name());
+        if (rowComparisonPanel.isExpanded() && key.kind() == SchemaObject.Kind.TABLE) rowComparisonPanel.showLoading(key.qualifiedName());
         else if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("La comparación de filas está disponible para tablas.");
-        comparisonView.showMessage("Cargando y comparando la definición de " + key.name() + "…");
-        connectionStatus.setText("Leyendo definición de " + key.name() + " en segundo plano…");
+        comparisonView.showMessage("Cargando y comparando la definición de " + key.qualifiedName() + "…");
+        connectionStatus.setText("Leyendo definición de " + key.qualifiedName() + " en segundo plano…");
         DatabaseConnector sourceConnector = source, targetConnector = target;
         // Se carga el DDL al seleccionar el objeto y se conserva en caché aunque
         // la selección cambie durante la consulta.
@@ -551,13 +567,13 @@ public final class Main {
                     if (request != selectionRequest || !isSelected(key)) return;
                     selectedSchemaResult = result;
                     comparisonView.showResult(result, AppTheme.isDark(theme));
-                    connectionStatus.setText("Definición comparada · " + key.name());
+                    connectionStatus.setText("Definición comparada · " + key.qualifiedName());
                     if (rowComparisonPanel.isExpanded() && key.kind() == SchemaObject.Kind.TABLE) startRowComparison(result);
                 });
             } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> {
                 if (request != selectionRequest || !isSelected(key)) return;
                 setBusy(false, "No se pudo cargar la definición");
-                comparisonView.showMessage("No se pudo cargar " + key.name() + ": " + AppUtils.errorMessage(ex));
+                comparisonView.showMessage("No se pudo cargar " + key.qualifiedName() + ": " + AppUtils.errorMessage(ex));
                 if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("No se pudo cargar la tabla para comparar filas.");
             }); }
         });
@@ -599,7 +615,7 @@ public final class Main {
         Runnable refresh = () -> {
             try {
                 preview.setText(rowSqlPreview(rows, insertChoice.isSelected(), updateChoice.isSelected(), deleteChoice.isSelected(),
-                        transaction.isSelected(), fileMode.getSelectedIndex() == 1));
+                        transaction.isSelected(), fileMode.getSelectedIndex() == 1, schemaEngine));
                 preview.setCaretPosition(0);
             } catch (RuntimeException ex) {
                 preview.setText("No se pudo preparar la exportación: " + AppUtils.errorMessage(ex));
@@ -629,7 +645,7 @@ public final class Main {
             if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
             java.io.File output = chooser.getSelectedFile();
             if (output.exists() && JOptionPane.showConfirmDialog(frame, "El archivo ya existe. ¿Querés reemplazarlo?", "Confirmar reemplazo", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
-            String sql = RowSqlExporter.export(rows, includeInserts, includeUpdates, includeDeletes, transaction.isSelected());
+            String sql = RowSqlExporter.export(rows, includeInserts, includeUpdates, includeDeletes, transaction.isSelected(), schemaEngine);
             Files.writeString(output.toPath(), sql, StandardCharsets.UTF_8);
             JOptionPane.showMessageDialog(frame, "Se guardó el SQL de filas. No se ejecutó.\n" + output.getAbsolutePath(), "Exportación lista", JOptionPane.INFORMATION_MESSAGE);
         }
@@ -638,22 +654,22 @@ public final class Main {
     }
 
     private static String rowSqlPreview(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes,
-                                        boolean transaction, boolean separateFiles) {
+                                        boolean transaction, boolean separateFiles, DatabaseEngine engine) {
         if (!hasSelectedRowChanges(rows, inserts, updates, deletes))
             return "-- No hay filas para exportar con estas operaciones.\n-- Activá DELETE si solo hay registros presentes en destino.";
-        if (!separateFiles) return RowSqlExporter.export(rows, inserts, updates, deletes, transaction);
+        if (!separateFiles) return RowSqlExporter.export(rows, inserts, updates, deletes, transaction, engine);
         StringBuilder preview = new StringBuilder("-- Vista previa: cada bloque se guardará en un archivo separado.\n");
-        appendRowSqlSection(preview, "INSERT", rows, inserts, false, false, transaction);
-        appendRowSqlSection(preview, "UPDATE", rows, false, updates, false, transaction);
-        appendRowSqlSection(preview, "DELETE", rows, false, false, deletes, transaction);
+        appendRowSqlSection(preview, "INSERT", rows, inserts, false, false, transaction, engine);
+        appendRowSqlSection(preview, "UPDATE", rows, false, updates, false, transaction, engine);
+        appendRowSqlSection(preview, "DELETE", rows, false, false, deletes, transaction, engine);
         return preview.toString();
     }
 
     private static void appendRowSqlSection(StringBuilder preview, String name, RowDiff.Result rows,
-                                            boolean inserts, boolean updates, boolean deletes, boolean transaction) {
+                                            boolean inserts, boolean updates, boolean deletes, boolean transaction, DatabaseEngine engine) {
         if (!hasSelectedRowChanges(rows, inserts, updates, deletes)) return;
         preview.append("\n-- Archivo: db-diff-").append(name.toLowerCase(Locale.ROOT)).append(".sql\n");
-        preview.append(RowSqlExporter.export(rows, inserts, updates, deletes, transaction));
+        preview.append(RowSqlExporter.export(rows, inserts, updates, deletes, transaction, engine));
     }
 
     private void exportRowsByOperation(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes, boolean transaction) throws IOException {
@@ -662,9 +678,9 @@ public final class Main {
         if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
         Path directory = chooser.getSelectedFile().toPath();
         List<Map.Entry<String, String>> files = new ArrayList<>();
-        addRowExportFile(files, directory, "db-diff-inserts.sql", rows, inserts, false, false, transaction);
-        addRowExportFile(files, directory, "db-diff-updates.sql", rows, false, updates, false, transaction);
-        addRowExportFile(files, directory, "db-diff-deletes.sql", rows, false, false, deletes, transaction);
+        addRowExportFile(files, directory, "db-diff-inserts.sql", rows, inserts, false, false, transaction, schemaEngine);
+        addRowExportFile(files, directory, "db-diff-updates.sql", rows, false, updates, false, transaction, schemaEngine);
+        addRowExportFile(files, directory, "db-diff-deletes.sql", rows, false, false, deletes, transaction, schemaEngine);
         List<Path> existing = files.stream().map(entry -> Path.of(entry.getKey())).filter(Files::exists).toList();
         if (!existing.isEmpty() && JOptionPane.showConfirmDialog(frame,
                 "Se reemplazarán estos archivos:\n" + existing.stream().map(Path::getFileName).map(Path::toString).collect(java.util.stream.Collectors.joining("\n")),
@@ -674,9 +690,9 @@ public final class Main {
     }
 
     private static void addRowExportFile(List<Map.Entry<String, String>> files, Path directory, String fileName,
-                                         RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes, boolean transaction) {
+                                         RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes, boolean transaction, DatabaseEngine engine) {
         if (hasSelectedRowChanges(rows, inserts, updates, deletes))
-            files.add(Map.entry(directory.resolve(fileName).toString(), RowSqlExporter.export(rows, inserts, updates, deletes, transaction)));
+            files.add(Map.entry(directory.resolve(fileName).toString(), RowSqlExporter.export(rows, inserts, updates, deletes, transaction, engine)));
     }
 
     private static boolean hasSelectedRowChanges(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes) {
@@ -694,12 +710,21 @@ public final class Main {
         EnumSet<DiffEngine.Status> ops = EnumSet.of(DiffEngine.Status.CHANGED, DiffEngine.Status.SOURCE_ONLY, DiffEngine.Status.TARGET_ONLY);
         JTextArea preview = area();
         JCheckBox[] checks = new JCheckBox[3]; JPanel choices = new JPanel(new GridLayout(0, 1));
-        JCheckBox transaction = new JCheckBox("Envolver el script en START TRANSACTION / COMMIT");
-        JCheckBox dropIfExists = new JCheckBox("Usar DROP IF EXISTS al eliminar objetos o reemplazar rutinas");
-        dropIfExists.setToolTipText("Solo evita errores si ya no existe. DROP TABLE IF EXISTS igualmente elimina la tabla y sus datos si está presente.");
-        JComboBox<String> createStrategy = new JComboBox<>(new String[]{"ALTER TABLE (recomendado)", "CREATE", "CREATE OR REPLACE"});
+        boolean sqlServerExport = schemaEngine == DatabaseEngine.SQLSERVER;
+        JCheckBox transaction = new JCheckBox(sqlServerExport
+                ? "Envolver el script en BEGIN TRANSACTION / COMMIT"
+                : "Envolver el script en START TRANSACTION / COMMIT");
+        JCheckBox dropIfExists = new JCheckBox(sqlServerExport
+                ? "Usar DROP IF EXISTS al eliminar objetos"
+                : "Usar DROP IF EXISTS al eliminar objetos o reemplazar rutinas");
+        dropIfExists.setToolTipText("Solo evita errores si el objeto ya no existe. DROP TABLE IF EXISTS igualmente elimina la tabla y sus datos si está presente.");
+        JComboBox<String> createStrategy = new JComboBox<>(sqlServerExport
+                ? new String[]{"ALTER (revisión manual para tablas)", "CREATE", "CREATE OR ALTER"}
+                : new String[]{"ALTER TABLE (recomendado)", "CREATE", "CREATE OR REPLACE"});
         createStrategy.setSelectedIndex(0);
-        createStrategy.setToolTipText("Para tablas modificadas, ALTER genera cambios de columnas e índices cuando puede derivarlos. CREATE OR REPLACE en MariaDB elimina los datos de la tabla.");
+        createStrategy.setToolTipText(sqlServerExport
+                ? "ALTER modifica vistas y rutinas existentes; los cambios de tabla quedan para revisión. CREATE OR ALTER requiere SQL Server 2016 SP1 o posterior."
+                : "Para tablas modificadas, ALTER genera cambios de columnas e índices cuando puede derivarlos. CREATE OR REPLACE en MariaDB elimina los datos de la tabla.");
         JLabel warning = new JLabel();
         List<DiffEngine.Result> currentlySelected = resultList.getSelectedValuesList().stream()
                 .filter(DiffEngine.Result.class::isInstance).map(DiffEngine.Result.class::cast).toList();
@@ -727,7 +752,7 @@ public final class Main {
             List<DiffEngine.Result> exportResults = exportSelection.getSelectedValuesList();
             SqlExporter.Strategy strategy = switch (createStrategy.getSelectedIndex()) {
                 case 1 -> SqlExporter.Strategy.CREATE;
-                case 2 -> SqlExporter.Strategy.CREATE_OR_REPLACE;
+                case 2 -> sqlServerExport ? SqlExporter.Strategy.CREATE_OR_ALTER : SqlExporter.Strategy.CREATE_OR_REPLACE;
                 default -> SqlExporter.Strategy.ALTER;
             };
             preview.setText(SqlExporter.export(exportResults, ops, targetDatabase, transaction.isSelected(), dropIfExists.isSelected(), strategy, schemaEngine));
@@ -735,16 +760,20 @@ public final class Main {
             preview.setBackground(ThemePalette.forMode(AppTheme.isDark(theme)).editor());
             preview.setForeground(ThemePalette.forMode(AppTheme.isDark(theme)).foreground());
             if (exportResults.isEmpty()) warning.setText("Seleccioná al menos un objeto para ver el script.");
+            else if (schemaEngine == DatabaseEngine.SQLSERVER && strategy == SqlExporter.Strategy.CREATE_OR_ALTER)
+                warning.setText("CREATE OR ALTER requiere SQL Server 2016 SP1 o posterior; los cambios de tablas quedan para revisión manual.");
             else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MARIADB && exportResults.stream().anyMatch(r -> r.key().kind() == SchemaObject.Kind.TABLE && r.status() == DiffEngine.Status.CHANGED))
                 warning.setText("CREATE OR REPLACE TABLE elimina y recrea la tabla destino, incluidos sus datos.");
             else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MYSQL)
                 warning.setText("MySQL admite CREATE OR REPLACE para vistas. Las tablas modificadas se exportan como ALTER si se pueden derivar.");
+            else if (transaction.isSelected() && schemaEngine == DatabaseEngine.SQLSERVER)
+                warning.setText("El script usa transacción explícita; revisá cada sentencia y las restricciones del servidor antes de aplicarlo.");
             else if (transaction.isSelected())
                 warning.setText("MariaDB puede confirmar DDL automáticamente; la transacción no garantiza rollback del esquema.");
             else warning.setText("El SQL solo se exporta; la aplicación nunca lo ejecuta.");
         };
         DiffEngine.Status[] statuses = {DiffEngine.Status.SOURCE_ONLY, DiffEngine.Status.CHANGED, DiffEngine.Status.TARGET_ONLY};
-        String[] labels = {"CREATE: objetos solo en origen", "ALTER / reemplazar: objetos modificados", "DROP: objetos solo en destino"};
+        String[] labels = {"CREATE: objetos solo en origen", sqlServerExport ? "ALTER / CREATE OR ALTER: objetos modificados" : "ALTER / reemplazar: objetos modificados", "DROP: objetos solo en destino"};
         for (int i = 0; i < checks.length; i++) {
             checks[i] = new JCheckBox(labels[i], i != 2);
             final DiffEngine.Status status = statuses[i];
@@ -794,7 +823,12 @@ public final class Main {
         try { Files.writeString(chooser.getSelectedFile().toPath(), preview.getText(), StandardCharsets.UTF_8); JOptionPane.showMessageDialog(frame, "Se guardó el SQL. No se ejecutó.", "Exportación lista", JOptionPane.INFORMATION_MESSAGE); }
         catch (IOException ex) { error("No se pudo guardar la exportación", ex); }
     }
-    private void setBusy(boolean busy, String text) { connectionStatus.setText(text); frame.setCursor(busy ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor()); }
+    private void setBusy(boolean busy, String text) {
+        if (busy || !schemaComparisonRunning) connectionStatus.setText(text);
+        boolean active = busy || schemaComparisonRunning;
+        activityIndicator.setVisible(active);
+        frame.setCursor(active ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor());
+    }
 
     /** Keep workspace actions unavailable until both catalogs are connected. */
     private void setConnectionAvailable(boolean available) {
@@ -859,6 +893,8 @@ public final class Main {
         rowComparisonPanel.setThemeColors(dark);
         comparisonView.setCodeFont(codeFontFamily, codeFontSize);
         ThemePalette palette = ThemePalette.forMode(dark);
+        activityIndicator.setForeground(dark ? new Color(93, 160, 245) : new Color(49, 112, 199));
+        activityIndicator.setBackground(palette.panel());
         if (comparisonSplit != null) comparisonSplit.setBackground(palette.border());
         objectSearchBox.setBackground(palette.panel());
         objectSearchBox.setBorder(BorderFactory.createCompoundBorder(
@@ -934,7 +970,7 @@ public final class Main {
         @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
             SchemaObject.Key key = objectKey(value);
             boolean enabled = list.isEnabled();
-            name.setText(key.name());
+            name.setText(key.qualifiedName());
             type.setText(kindName(key.kind()));
             Color foreground = !enabled ? (list.getBackground().getRed() < 90 ? new Color(112, 121, 134) : new Color(155, 163, 174))
                     : selected ? list.getSelectionForeground() : list.getForeground();
@@ -1005,7 +1041,7 @@ public final class Main {
     }
 
     private record CatalogItem(SchemaObject.Key key, boolean sourcePresent, boolean targetPresent) {
-        @Override public String toString() { return key.name() + " · " + kindName(key.kind()) + " · sin comparar"; }
+        @Override public String toString() { return key.qualifiedName() + " · " + kindName(key.kind()) + " · sin comparar"; }
     }
 
     private static String kindName(SchemaObject.Kind kind) {

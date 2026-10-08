@@ -26,7 +26,7 @@ final class ConnectionDialog extends JDialog {
     private final JTextField[][] fields = new JTextField[2][3];
     private final JPasswordField[] passwords = {new JPasswordField(15), new JPasswordField(15)};
     private final JCheckBox[] rememberPasswords = {new JCheckBox("Recordar contraseña en este equipo"), new JCheckBox("Recordar contraseña en este equipo")};
-    private final JCheckBox[] tls = {new JCheckBox("Use TLS and verify server certificate"), new JCheckBox("Use TLS and verify server certificate")};
+    private final JCheckBox[] tls = {new JCheckBox("Usar TLS y verificar certificado"), new JCheckBox("Usar TLS y verificar certificado")};
     private final JComboBox<DatabaseEngine> engine = new JComboBox<>(DatabaseEngine.values());
     private final List<JComboBox<String>> databases = List.of(new JComboBox<>(), new JComboBox<>());
     private final List<JComboBox<String>> savedChoices = List.of(new JComboBox<>(), new JComboBox<>());
@@ -46,15 +46,20 @@ final class ConnectionDialog extends JDialog {
             String port = Integer.toString(((DatabaseEngine) engine.getSelectedItem()).defaultPort());
             for (int i = 0; i < 2; i++) { fields[i][1].setText(port); invalidateTest(i); }
         });
+        engine.setPrototypeDisplayValue(DatabaseEngine.SQLSERVER);
+        engine.setPreferredSize(new Dimension(195, engine.getPreferredSize().height));
+        engine.setToolTipText("Elegí el motor que usan las dos bases de esta comparación.");
         GridBagConstraints engineConstraints = new GridBagConstraints(); engineConstraints.insets = new Insets(5, 6, 5, 6); engineConstraints.anchor = GridBagConstraints.WEST; engineConstraints.gridx = 0; engineConstraints.gridy = 0;
-        form.add(new JLabel("Motor de base de datos"), engineConstraints); engineConstraints.gridx = 1; engineConstraints.gridwidth = 3; form.add(engine, engineConstraints);
+        form.add(new JLabel("Motor de base de datos", UiIcons.themed(UiIcons.CONNECT, 16), JLabel.LEFT), engineConstraints); engineConstraints.gridx = 1; engineConstraints.gridwidth = 3; form.add(engine, engineConstraints);
+        GridBagConstraints separatorConstraints = new GridBagConstraints(); separatorConstraints.gridx = 0; separatorConstraints.gridy = 1; separatorConstraints.gridwidth = 4; separatorConstraints.fill = GridBagConstraints.HORIZONTAL; separatorConstraints.insets = new Insets(7, 6, 3, 6);
+        form.add(new JSeparator(SwingConstants.HORIZONTAL), separatorConstraints);
         try { for (ConnectionProfile profile : ConnectionProfiles.load()) savedProfiles.put(profile.name(), profile); }
         catch (IOException ex) { JOptionPane.showMessageDialog(owner, "No se pudieron cargar los perfiles guardados: " + ex.getMessage(), "Perfiles no disponibles", JOptionPane.WARNING_MESSAGE); }
         String[] labels = {"Servidor", "Puerto", "Usuario"}; String[] defaults = {"127.0.0.1", "3306", ""};
         for (int side = 0; side < 2; side++) {
             GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(5, 6, 5, 6); c.anchor = GridBagConstraints.WEST;
-            c.gridx = side * 2; c.gridy = 1; c.gridwidth = 2; JLabel header = new JLabel(side == 0 ? "BASE DE ORIGEN" : "BASE DE DESTINO"); header.setFont(new Font("Segoe UI", Font.BOLD, 11)); form.add(header, c);
-            c.gridy = 2; c.gridwidth = 1; c.weightx = 0; form.add(new JLabel("Perfil"), c);
+            c.gridx = side * 2; c.gridy = 2; c.gridwidth = 2; JLabel header = new JLabel(side == 0 ? "BASE DE ORIGEN" : "BASE DE DESTINO"); header.setFont(new Font("Segoe UI", Font.BOLD, 11)); form.add(header, c);
+            c.gridy = 3; c.gridwidth = 1; c.weightx = 0; form.add(new JLabel("Perfil"), c);
             c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
             JComboBox<String> savedChoice = savedChoices.get(side); savedChoice.setPrototypeDisplayValue("Elegí un perfil guardado"); refreshSavedChoices(side, null);
             JButton saveProfile = new JButton("Guardar"); JButton deleteProfile = new JButton("Eliminar");
@@ -62,19 +67,19 @@ final class ConnectionDialog extends JDialog {
             JPanel profileRow = new JPanel(new BorderLayout(4, 0)); profileRow.add(savedChoice, BorderLayout.CENTER); profileRow.add(profileControls, BorderLayout.EAST);
             c.gridx = side * 2 + 1; c.gridwidth = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(profileRow, c);
             for (int row = 0; row < labels.length; row++) {
-                c.gridy = row + 3; c.gridwidth = 1; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel(labels[row]), c);
+                c.gridy = row + 4; c.gridwidth = 1; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel(labels[row]), c);
                 c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; JTextField f = new JTextField(defaults[row], 15); fields[side][row] = f; form.add(f, c);
             }
-            c.gridy = 6; c.gridx = side * 2; c.gridwidth = 1; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Base de datos"), c);
+            c.gridy = 7; c.gridx = side * 2; c.gridwidth = 1; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Base de datos"), c);
             c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
             JComboBox<String> database = databases.get(side); database.setEnabled(false); database.setPrototypeDisplayValue("Elegí una base de datos"); form.add(database, c);
-            c.gridy = 7; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Contraseña"), c);
+            c.gridy = 8; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Contraseña"), c);
             c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; passwords[side].setEchoChar('•'); form.add(passwords[side], c);
-            c.gridy = 8; c.gridx = side * 2; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(rememberPasswords[side], c);
-            c.gridy = 9; form.add(tls[side], c);
+            c.gridy = 9; c.gridx = side * 2; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(rememberPasswords[side], c);
+            c.gridy = 10; form.add(tls[side], c);
             testButtons[side] = new JButton("Probar conexión"); testStatus[side] = new JLabel("Sin probar"); testStatus[side].setForeground(new Color(105, 118, 136));
             JPanel testRow = new JPanel(new BorderLayout(8, 0)); testRow.add(testButtons[side], BorderLayout.WEST); testRow.add(testStatus[side], BorderLayout.CENTER);
-            c.gridy = 10; c.gridx = side * 2; c.gridwidth = 2; form.add(testRow, c);
+            c.gridy = 11; c.gridx = side * 2; c.gridwidth = 2; form.add(testRow, c);
             final int endpointIndex = side; testButtons[side].addActionListener(e -> testConnection(endpointIndex));
             savedChoice.addActionListener(e -> {
                 String name = (String) savedChoice.getSelectedItem();
