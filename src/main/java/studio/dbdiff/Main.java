@@ -99,10 +99,10 @@ public final class Main {
         JLabel title = new JLabel(AppInfo.NAME); title.setForeground(Color.WHITE); title.setFont(new Font("Segoe UI", Font.BOLD, 21));
         JLabel sub = new JLabel("Compará esquemas. Revisá los cambios. Exportá con seguridad."); sub.setForeground(new Color(184, 198, 216)); sub.setFont(new Font("Segoe UI", Font.PLAIN, 12)); brand.add(title); brand.add(Box.createVerticalStrut(3)); brand.add(sub);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4)); actions.setOpaque(false);
-        JButton connect = button("Conectar bases", true); connect.putClientProperty("dbdiff.primary", Boolean.TRUE); connect.addActionListener(e -> connect());
-        JButton compare = button("Comparar", false); compare.addActionListener(e -> compare());
-        JButton rows = button("Comparar filas", false); rows.addActionListener(e -> compareRows());
-        JButton export = button("Exportar SQL", false); export.addActionListener(e -> export());
+        JButton connect = button("Conectar bases", true); connect.setIcon(UiIcons.themed(UiIcons.CONNECT, 16)); connect.setIconTextGap(7); connect.putClientProperty("dbdiff.primary", Boolean.TRUE); connect.addActionListener(e -> connect());
+        JButton compare = button("Comparar", false); compare.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compare.setIconTextGap(7); compare.addActionListener(e -> compare());
+        JButton rows = button("Comparar filas", false); rows.setIcon(UiIcons.themed(UiIcons.COMPARE_ROWS, 16)); rows.setIconTextGap(7); rows.addActionListener(e -> compareRows());
+        JButton export = button("Exportar SQL", false); export.setIcon(UiIcons.themed(UiIcons.EXPORT, 16)); export.setIconTextGap(7); export.addActionListener(e -> export());
         JComboBox<String> themeChoice = new JComboBox<>(new String[]{"Sistema", "Claro", "Oscuro"}); themeChoice.setSelectedItem(theme);
         themeChoice.setToolTipText("Apariencia de la aplicación"); themeChoice.addActionListener(e -> { theme = (String) themeChoice.getSelectedItem(); saveUiPreferences(); applyTheme(); });
         actions.add(connect); actions.add(compare); actions.add(rows); actions.add(export); actions.add(themeChoice); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
@@ -328,7 +328,7 @@ public final class Main {
 
     private void applyTheme() {
         AppTheme.apply(frame, headerPanel, theme);
-        if (resultList.getSelectedValue() instanceof DiffEngine.Result) selectResult(null);
+        comparisonView.setThemeColors(AppTheme.isDark(theme));
     }
 
     private static final class ResultRenderer extends DefaultListCellRenderer {

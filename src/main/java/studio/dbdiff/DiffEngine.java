@@ -4,7 +4,9 @@ import java.util.*;
 
 public final class DiffEngine {
     public enum Status { IDENTICAL, CHANGED, SOURCE_ONLY, TARGET_ONLY }
-    public record Result(SchemaObject.Key key, Status status, SchemaObject source, SchemaObject target, List<String> diffLines) { }
+    public enum LineType { CONTEXT, ADDED, REMOVED }
+    public record DiffLine(LineType type, String text, Integer sourceLineNumber, Integer targetLineNumber) { }
+    public record Result(SchemaObject.Key key, Status status, SchemaObject source, SchemaObject target, List<DiffLine> diffLines) { }
 
     public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds, Set<SchemaObject.Key> selected) {
         Map<SchemaObject.Key, SchemaObject> left = index(source), right = index(target);
@@ -14,7 +16,9 @@ public final class DiffEngine {
             if (!kinds.contains(key.kind()) || (!selected.isEmpty() && !selected.contains(key))) continue;
             SchemaObject a = left.get(key), b = right.get(key);
             Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : a.signature().equals(b.signature()) ? Status.IDENTICAL : Status.CHANGED;
-            results.add(new Result(key, status, a, b, a != null && b != null && status == Status.CHANGED ? unified(a.definition(), b.definition()) : List.of()));
+            List<DiffLine> diff = a != null && b != null ? unified(a.definition(), b.definition())
+                    : a != null ? oneSided(a.definition(), false) : oneSided(b.definition(), true);
+            results.add(new Result(key, status, a, b, diff));
         }
         return results;
     }
@@ -23,18 +27,31 @@ public final class DiffEngine {
         Map<SchemaObject.Key, SchemaObject> result = new HashMap<>(); for (SchemaObject value : values) result.put(value.key(), value); return result;
     }
 
-    private static List<String> unified(String before, String after) {
+    private static List<DiffLine> unified(String before, String after) {
         String[] a = before.split("\n", -1), b = after.split("\n", -1);
         int n = a.length, m = b.length; int[][] lcs = new int[n + 1][m + 1];
         for (int i = n - 1; i >= 0; i--) for (int j = m - 1; j >= 0; j--)
             lcs[i][j] = a[i].equals(b[j]) ? 1 + lcs[i + 1][j + 1] : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-        List<String> out = new ArrayList<>(); out.add("--- Source"); out.add("+++ Target");
+        List<DiffLine> out = new ArrayList<>();
         int i = 0, j = 0;
         while (i < n || j < m) {
-            if (i < n && j < m && a[i].equals(b[j])) { out.add("  " + a[i]); i++; j++; }
-            else if (j < m && (i == n || lcs[i][j + 1] >= lcs[i + 1][j])) out.add("+ " + b[j++]);
-            else out.add("- " + a[i++]);
+            if (i < n && j < m && a[i].equals(b[j])) {
+                out.add(new DiffLine(LineType.CONTEXT, a[i], i + 1, j + 1)); i++; j++;
+            } else if (j < m && (i == n || lcs[i][j + 1] > lcs[i + 1][j])) {
+                out.add(new DiffLine(LineType.ADDED, b[j], null, j + 1)); j++;
+            } else {
+                out.add(new DiffLine(LineType.REMOVED, a[i], i + 1, null)); i++;
+            }
         }
-        return out;
+        return List.copyOf(out);
+    }
+
+    private static List<DiffLine> oneSided(String definition, boolean targetOnly) {
+        String[] lines = definition.split("\n", -1);
+        List<DiffLine> result = new ArrayList<>(lines.length);
+        for (int i = 0; i < lines.length; i++) result.add(targetOnly
+                ? new DiffLine(LineType.ADDED, lines[i], null, i + 1)
+                : new DiffLine(LineType.REMOVED, lines[i], i + 1, null));
+        return List.copyOf(result);
     }
 }
