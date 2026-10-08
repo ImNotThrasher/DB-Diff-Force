@@ -6,7 +6,7 @@ public final class SqlExporter {
     private SqlExporter() { }
 
     public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations, String targetDatabase) {
-        StringBuilder out = new StringBuilder("-- DB-Diff Studio export\n-- Review and adapt before use. This file was not executed.\n-- Definitions may be incomplete when MariaDB metadata permissions are limited.\n\n");
+        StringBuilder out = new StringBuilder("-- " + AppInfo.NAME + " export\n-- Review and adapt before use. This file was not executed.\n-- Definitions may be incomplete when MariaDB metadata permissions are limited.\n\n");
         for (DiffEngine.Result result : results) {
             if (!operations.contains(result.status()) || result.status() == DiffEngine.Status.IDENTICAL) continue;
             SchemaObject object = result.source() != null ? result.source() : result.target();
@@ -43,7 +43,7 @@ public final class SqlExporter {
         return "DROP " + (key.kind() == SchemaObject.Kind.PROCEDURE ? "PROCEDURE" : "FUNCTION") + " " + quote(key.name()) + ";\n" + routineCreate(ddl);
     }
     private static String routineCreate(String ddl) { return "DELIMITER //\n" + ddl + " //\nDELIMITER ;"; }
-    private static boolean unavailable(SchemaObject object) { return object.definition().startsWith("-- DB-Diff Studio: SHOW CREATE"); }
+    private static boolean unavailable(SchemaObject object) { return object.definition().startsWith("-- " + AppInfo.NAME + ": SHOW CREATE"); }
     private static String dropSql(SchemaObject.Key key) {
         String name = quote(key.name());
         return switch (key.kind()) {

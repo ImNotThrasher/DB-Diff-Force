@@ -7,7 +7,7 @@ import java.util.*;
 public final class RowSqlExporter {
     private RowSqlExporter() { }
     public static String export(RowDiff.Result result, boolean inserts, boolean updates, boolean deletes) {
-        StringBuilder sql = new StringBuilder("-- DB-Diff Studio row export\n-- Review before use. This file was not executed.\n");
+        StringBuilder sql = new StringBuilder("-- " + AppInfo.NAME + " row export\n-- Review before use. This file was not executed.\n");
         if (result.truncated()) sql.append("-- WARNING: comparison was truncated; this export contains only the retained first changes.\n");
         sql.append("\n");
         String table = quote(result.targetDatabase()) + "." + quote(result.table().name());

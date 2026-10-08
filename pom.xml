@@ -4,12 +4,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <groupId>studio.dbdiff</groupId>
-    <artifactId>db-diff-studio</artifactId>
+    <artifactId>db-diffforce</artifactId>
     <version>0.2.0</version>
-    <name>DB-Diff Studio</name>
+    <name>${app.name}</name>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>
+        <app.name>DB-DiffForce</app.name>
     </properties>
     <dependencies>
         <dependency>
@@ -40,6 +41,7 @@
                             <addClasspath>true</addClasspath>
                             <classpathPrefix>lib/</classpathPrefix>
                             <mainClass>studio.dbdiff.Main</mainClass>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
                         </manifest>
                     </archive>
                 </configuration>

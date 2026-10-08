@@ -72,7 +72,7 @@ public final class ConnectionProfiles {
             properties.setProperty(key + ".tls", Boolean.toString(profile.useTls()));
         }
         Path file = file(); Files.createDirectories(file.getParent());
-        try (OutputStream output = Files.newOutputStream(file)) { properties.store(output, "DB-Diff Studio connection profiles. Passwords are not stored."); }
+        try (OutputStream output = Files.newOutputStream(file)) { properties.store(output, AppInfo.NAME + " connection profiles. Passwords are not stored."); }
     }
 
     private static Path file() { return Path.of(System.getProperty("user.home"), ".db-diff-studio", "connections.properties"); }

@@ -111,7 +111,7 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
             String ddl = showCreate(key, 2);
             return new SchemaObject(key, ddl, normalize(ddl).replaceAll("(?i)AUTO_INCREMENT\\s*=\\s*\\d+", "AUTO_INCREMENT=<value>"));
         } catch (SQLException ex) {
-            String definition = "-- DB-Diff Studio: SHOW CREATE TABLE unavailable (" + safeMessage(ex) + ")\n-- Schema summary for review only; no executable DDL follows.\n" + summary;
+            String definition = "-- " + AppInfo.NAME + ": SHOW CREATE TABLE unavailable (" + safeMessage(ex) + ")\n-- Schema summary for review only; no executable DDL follows.\n" + summary;
             return new SchemaObject(key, definition, normalize(definition));
         }
     }
@@ -230,12 +230,12 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
 
     private SchemaObject loadView(SchemaObject.Key key) throws SQLException {
         try { String definition = showCreate(key, 2); return new SchemaObject(key, definition, normalize(definition)); }
-        catch (SQLException ex) { String definition = "-- DB-Diff Studio: SHOW CREATE VIEW unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, normalize(definition)); }
+        catch (SQLException ex) { String definition = "-- " + AppInfo.NAME + ": SHOW CREATE VIEW unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, normalize(definition)); }
     }
 
     private SchemaObject loadRoutine(SchemaObject.Key key) throws SQLException {
         try { String definition = showCreate(key, 3); return new SchemaObject(key, definition, normalize(definition)); }
-        catch (SQLException ex) { String definition = "-- DB-Diff Studio: SHOW CREATE " + key.kind() + " unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, normalize(definition)); }
+        catch (SQLException ex) { String definition = "-- " + AppInfo.NAME + ": SHOW CREATE " + key.kind() + " unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, normalize(definition)); }
     }
 
     private String showCreate(SchemaObject.Key key, int ddlColumn) throws SQLException {
