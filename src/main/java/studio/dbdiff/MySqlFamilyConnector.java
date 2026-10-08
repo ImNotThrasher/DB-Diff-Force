@@ -289,7 +289,7 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     }
 
     private static void addChange(List<RowDiff.RowChange> changes, int limit, RowDiff.RowChange change) { if (changes.size() < limit) changes.add(change); }
-    private static boolean safeComparable(String type) { return safeKey(type) || Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "float", "double", "real", "char", "varchar", "tinytext", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "enum", "set").contains(type); }
+    private static boolean safeComparable(String type) { return safeKey(type) || Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "float", "double", "real", "bit", "char", "varchar", "tinytext", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "enum", "set").contains(type); }
     private static boolean safeKey(String type) { return Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "char", "varchar", "date", "datetime", "timestamp", "time", "year").contains(type); }
     private static boolean isText(String type) { return Set.of("char", "varchar").contains(type); }
     private static Map<String, Object> readRow(ResultSet rs, List<RowDiff.Column> columns) throws SQLException {

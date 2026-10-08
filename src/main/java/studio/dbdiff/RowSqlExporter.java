@@ -100,6 +100,11 @@ public final class RowSqlExporter {
         if (value == null) return "NULL";
         String normalizedType = type.toLowerCase(Locale.ROOT);
         if (isNumeric(normalizedType)) {
+            // MySQL Connector/J commonly returns BIT values as a byte array.
+            // Interpret it as an unsigned integer so exported SQL remains a
+            // valid numeric BIT value instead of parsing the Java array label.
+            if (normalizedType.equals("bit") && value instanceof byte[] bytes)
+                return new BigDecimal(new java.math.BigInteger(1, bytes)).toPlainString();
             if (value instanceof Boolean bool) return bool ? "1" : "0";
             try { return new BigDecimal(value.toString()).toPlainString(); }
             catch (NumberFormatException ex) { throw new IllegalArgumentException("Unsafe numeric value for " + type, ex); }
