@@ -540,6 +540,9 @@ public final class SqlServerConnector implements DatabaseConnector {
     private static boolean isCharacterType(String type) { return Set.of("char", "varchar", "nchar", "nvarchar", "text", "ntext").contains(type.toLowerCase(Locale.ROOT)); }
 
     private static SchemaObject.Kind kind(String type) {
+        // LEFT JOINs against sys.objects produce a null type for unresolved
+        // references (for example, objects in another database/server).
+        if (type == null) return null;
         return switch (type) { case "U" -> SchemaObject.Kind.TABLE; case "V" -> SchemaObject.Kind.VIEW; case "P" -> SchemaObject.Kind.PROCEDURE; case "FN", "IF", "TF", "FS", "FT" -> SchemaObject.Kind.FUNCTION; case "TR" -> SchemaObject.Kind.TRIGGER; default -> null; };
     }
 
