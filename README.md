@@ -1,6 +1,16 @@
 # DB-Diff Studio
 
 DB-Diff Studio is a desktop tool for comparing MariaDB and MySQL schemas and exporting reviewed SQL. It connects to two endpoints, lets you choose tables, views, and routines, shows missing and changed objects, and exports SQL for selected targets. It never executes generated SQL.
+![Java 21](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
+![Maven](https://img.shields.io/badge/Maven-3.9+-C71A36?logo=apachemaven&logoColor=white)
+![MariaDB](https://img.shields.io/badge/MariaDB-supported-003545?logo=mariadb&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-supported-4479A1?logo=mysql&logoColor=white)
+## Índice
+
+- [Requirements](#requirements)
+- [Run](#run)
+- [Current scope](#current-scope)
+- [Design](#design)
 
 ## Requirements
 
@@ -13,7 +23,7 @@ DB-Diff Studio is a desktop tool for comparing MariaDB and MySQL schemas and exp
 
 On Windows, run `run.bat`. It builds the executable JAR and opens the desktop app in a separate window. The terminal returns to the prompt while the app stays open. On macOS or Linux, run `./run.sh`; the script builds and launches the app. To build without launching, run `mvn package`; the app is written to `target/db-diff-studio-0.2.0.jar`, with JDBC drivers in `target/lib`. Maven downloads the drivers and their dependencies into its local cache. Credentials are never saved there.
 
-The connection dialog accepts a database engine, then a host, port, database, user, and password for each endpoint. Both endpoints use the selected engine in this version. Passwords stay in memory for the session and are cleared when the window closes. TLS can be enabled per connection. The app does not persist connection profiles.
+The connection dialog accepts a database engine and connection details for each endpoint. Use **Test connection** to verify a server and load the databases visible to that account, then choose a database from the list. Both endpoints use the selected engine in this version. Saved profiles can be selected independently for source and target; they store the engine, host, port, database, username, and TLS option in `~/.db-diff-studio/connections.properties`. Passwords are never stored and must be entered for each session. TLS can be enabled per connection.
 
 After connecting, the object list is marked **not compared** until analysis runs. Use Ctrl-click or Shift-click to select individual objects. Compare analyzes the selected objects; with no selection, it analyzes every object in the enabled kinds. Select one compared table to compare its rows. Export SQL applies only to selected comparison results; with no selection, it asks you to select results rather than exporting everything.
 

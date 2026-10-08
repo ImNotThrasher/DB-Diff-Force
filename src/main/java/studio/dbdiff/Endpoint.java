@@ -6,7 +6,7 @@ public record Endpoint(DatabaseEngine engine, String host, int port, String data
         if (engine == null) throw new IllegalArgumentException("Database engine is required");
         if (host == null || host.isBlank()) throw new IllegalArgumentException("Host is required");
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Port must be between 1 and 65535");
-        if (database == null || database.isBlank()) throw new IllegalArgumentException("Database is required");
+        if (database == null) throw new IllegalArgumentException("Database is required");
         if (user == null || user.isBlank()) throw new IllegalArgumentException("User is required");
         password = password == null ? new char[0] : password.clone();
     }

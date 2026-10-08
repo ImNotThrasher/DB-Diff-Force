@@ -31,6 +31,18 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         }
     }
 
+    @Override public List<String> listDatabases() throws SQLException {
+        requireConnection();
+        List<String> databases = new ArrayList<>();
+        String sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA " +
+                "WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') " +
+                "ORDER BY SCHEMA_NAME";
+        try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(sql)) {
+            while (rs.next()) databases.add(rs.getString(1));
+        }
+        return List.copyOf(databases);
+    }
+
     @Override public List<SchemaObject> listObjects() throws SQLException {
         requireConnection();
         List<SchemaObject> result = new ArrayList<>();

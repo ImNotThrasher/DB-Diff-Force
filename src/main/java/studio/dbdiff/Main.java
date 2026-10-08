@@ -260,37 +260,221 @@ public final class Main {
 
     private static final class EndpointDialog extends JDialog {
         private Endpoint[] endpoints;
-        private final JTextField[][] fields = new JTextField[2][4];
-        private final JPasswordField[] passwords = {new JPasswordField(), new JPasswordField()};
+        private final JTextField[][] fields = new JTextField[2][3];
+        private final JPasswordField[] passwords = {new JPasswordField(15), new JPasswordField(15)};
         private final JCheckBox[] tls = {new JCheckBox("Use TLS and verify server certificate"), new JCheckBox("Use TLS and verify server certificate")};
         private final JComboBox<DatabaseEngine> engine = new JComboBox<>(DatabaseEngine.values());
+        private final List<JComboBox<String>> databases = List.of(new JComboBox<>(), new JComboBox<>());
+        private final List<JComboBox<String>> savedChoices = List.of(new JComboBox<>(), new JComboBox<>());
+        private final JButton[] testButtons = new JButton[2];
+        private final JLabel[] testStatus = new JLabel[2];
+        private final Map<String, ConnectionProfile> savedProfiles = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        private final boolean[] changingSavedChoice = new boolean[2];
+        private final boolean[] updatingDatabaseChoice = new boolean[2];
+        private final boolean[] testedSuccessfully = new boolean[2];
+        private final int[] testGenerations = new int[2];
+        private final String[] preferredDatabase = new String[2];
+        private boolean autoConnectRequested;
+
         EndpointDialog(JFrame owner) {
             super(owner, "Connect endpoints", true); setLayout(new BorderLayout(10, 10)); JPanel form = new JPanel(new GridBagLayout()); form.setBorder(new EmptyBorder(16, 20, 10, 20));
-            engine.addActionListener(e -> { String port = Integer.toString(((DatabaseEngine) engine.getSelectedItem()).defaultPort()); fields[0][1].setText(port); fields[1][1].setText(port); });
+            engine.addActionListener(e -> {
+                String port = Integer.toString(((DatabaseEngine) engine.getSelectedItem()).defaultPort());
+                for (int i = 0; i < 2; i++) { fields[i][1].setText(port); invalidateTest(i); }
+            });
             GridBagConstraints engineConstraints = new GridBagConstraints(); engineConstraints.insets = new Insets(5, 6, 5, 6); engineConstraints.anchor = GridBagConstraints.WEST; engineConstraints.gridx = 0; engineConstraints.gridy = 0;
             form.add(new JLabel("Database engine"), engineConstraints); engineConstraints.gridx = 1; engineConstraints.gridwidth = 3; form.add(engine, engineConstraints);
-            String[] labels = {"Host", "Port", "Database", "Username"}; String[] defaults = {"127.0.0.1", "3306", "", ""};
+            try { for (ConnectionProfile profile : ConnectionProfiles.load()) savedProfiles.put(profile.name(), profile); }
+            catch (IOException ex) { JOptionPane.showMessageDialog(owner, "Could not load saved connection profiles: " + ex.getMessage(), "Saved connections unavailable", JOptionPane.WARNING_MESSAGE); }
+            String[] labels = {"Host", "Port", "Username"}; String[] defaults = {"127.0.0.1", "3306", ""};
             for (int side = 0; side < 2; side++) {
                 GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(5, 6, 5, 6); c.anchor = GridBagConstraints.WEST;
                 c.gridx = side * 2; c.gridy = 1; c.gridwidth = 2; JLabel header = new JLabel(side == 0 ? "SOURCE DATABASE" : "TARGET DATABASE"); header.setFont(new Font("Segoe UI", Font.BOLD, 11)); form.add(header, c);
+                c.gridy = 2; c.gridwidth = 1; c.weightx = 0; form.add(new JLabel("Saved"), c);
+                c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
+                JComboBox<String> savedChoice = savedChoices.get(side); savedChoice.setPrototypeDisplayValue("Choose saved connection"); refreshSavedChoices(side, null);
+                JButton saveProfile = new JButton("Save"); JButton deleteProfile = new JButton("Delete");
+                JPanel profileControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0)); profileControls.add(saveProfile); profileControls.add(deleteProfile);
+                JPanel profileRow = new JPanel(new BorderLayout(4, 0)); profileRow.add(savedChoice, BorderLayout.CENTER); profileRow.add(profileControls, BorderLayout.EAST);
+                c.gridx = side * 2 + 1; c.gridwidth = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(profileRow, c);
                 for (int row = 0; row < labels.length; row++) {
-                    c.gridy = row + 2; c.gridwidth = 1; c.gridx = side * 2; form.add(new JLabel(labels[row]), c);
-                    c.gridx = side * 2 + 1; JTextField f = new JTextField(defaults[row], 15); fields[side][row] = f; form.add(f, c);
+                    c.gridy = row + 3; c.gridwidth = 1; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel(labels[row]), c);
+                    c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; JTextField f = new JTextField(defaults[row], 15); fields[side][row] = f; form.add(f, c);
                 }
-                c.gridy = 6; c.gridx = side * 2; form.add(new JLabel("Password"), c); c.gridx = side * 2 + 1; passwords[side].setEchoChar('•'); form.add(passwords[side], c);
-                c.gridy = 7; c.gridx = side * 2; c.gridwidth = 2; form.add(tls[side], c);
+                c.gridy = 6; c.gridx = side * 2; c.gridwidth = 1; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Database"), c);
+                c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
+                JComboBox<String> database = databases.get(side); database.setEnabled(false); database.setPrototypeDisplayValue("Choose a database"); form.add(database, c);
+                c.gridy = 7; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Password"), c);
+                c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; passwords[side].setEchoChar('•'); form.add(passwords[side], c);
+                c.gridy = 8; c.gridx = side * 2; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(tls[side], c);
+                testButtons[side] = new JButton("Test connection"); testStatus[side] = new JLabel("Not tested"); testStatus[side].setForeground(new Color(105, 118, 136));
+                JPanel testRow = new JPanel(new BorderLayout(8, 0)); testRow.add(testButtons[side], BorderLayout.WEST); testRow.add(testStatus[side], BorderLayout.CENTER);
+                c.gridy = 9; c.gridx = side * 2; c.gridwidth = 2; form.add(testRow, c);
+                final int endpointIndex = side; testButtons[side].addActionListener(e -> testConnection(endpointIndex));
+                savedChoice.addActionListener(e -> {
+                    String name = (String) savedChoice.getSelectedItem();
+                    if (!changingSavedChoice[endpointIndex] && name != null && !name.equals("Choose saved connection")) applyProfile(endpointIndex, savedProfiles.get(name));
+                });
+                databases.get(side).addActionListener(e -> { if (!updatingDatabaseChoice[endpointIndex]) finishAutomaticConnect(); });
+                saveProfile.addActionListener(e -> saveProfile(endpointIndex));
+                deleteProfile.addActionListener(e -> deleteProfile(endpointIndex));
+                observeChanges(side);
             }
-            JLabel secure = new JLabel("Passwords are held only in memory for this session; TLS is recommended for remote servers."); secure.setBorder(new EmptyBorder(0, 20, 0, 20));
+            JLabel secure = new JLabel("Passwords are never saved; saved profiles keep server, database, user, and TLS settings. TLS is recommended remotely."); secure.setBorder(new EmptyBorder(0, 20, 0, 20));
             JButton cancel = new JButton("Cancel"), connect = button("Connect", true); JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT)); buttons.add(cancel); buttons.add(connect);
-            cancel.addActionListener(e -> dispose()); connect.addActionListener(e -> accept()); add(form, BorderLayout.CENTER); add(secure, BorderLayout.NORTH); add(buttons, BorderLayout.SOUTH); pack(); setLocationRelativeTo(owner);
+            cancel.addActionListener(e -> { autoConnectRequested = false; dispose(); }); connect.addActionListener(e -> requestConnect()); add(form, BorderLayout.CENTER); add(secure, BorderLayout.NORTH); add(buttons, BorderLayout.SOUTH); pack(); setLocationRelativeTo(owner);
         }
-        private void accept() {
+
+        private void refreshSavedChoices(int side, String selectedName) {
+            JComboBox<String> choice = savedChoices.get(side); changingSavedChoice[side] = true;
+            choice.removeAllItems(); choice.addItem("Choose saved connection");
+            savedProfiles.keySet().forEach(choice::addItem);
+            choice.setSelectedItem(selectedName == null ? "Choose saved connection" : selectedName);
+            choice.setEnabled(!savedProfiles.isEmpty()); changingSavedChoice[side] = false;
+        }
+
+        private void applyProfile(int side, ConnectionProfile profile) {
+            if (profile == null) return;
+            engine.setSelectedItem(profile.engine());
+            fields[side][0].setText(profile.host()); fields[side][1].setText(Integer.toString(profile.port())); fields[side][2].setText(profile.user());
+            passwords[side].setText(""); tls[side].setSelected(profile.useTls());
+            updatingDatabaseChoice[side] = true; databases.get(side).removeAllItems(); databases.get(side).setEnabled(false); updatingDatabaseChoice[side] = false;
+            preferredDatabase[side] = profile.database(); invalidateTest(side);
+        }
+
+        private void saveProfile(int side) {
+            if (!testedSuccessfully[side] || databases.get(side).getSelectedItem() == null) {
+                JOptionPane.showMessageDialog(this, "Test the connection and choose a database before saving the profile.", "Connection not ready", JOptionPane.INFORMATION_MESSAGE); return;
+            }
+            String selectedName = (String) savedChoices.get(side).getSelectedItem();
+            if (selectedName == null || selectedName.equals("Choose saved connection")) selectedName = "";
+            String initialName = selectedName.isBlank() ? fields[side][0].getText().trim() + " / " + databases.get(side).getSelectedItem() : selectedName;
+            String name = JOptionPane.showInputDialog(this, "Name this saved connection:", initialName);
+            if (name == null || name.isBlank()) return;
             try {
-                endpoints = new Endpoint[2];
+                ConnectionProfile profile = new ConnectionProfile(name.trim(), (DatabaseEngine) engine.getSelectedItem(),
+                        fields[side][0].getText().trim(), Integer.parseInt(fields[side][1].getText().trim()),
+                        (String) databases.get(side).getSelectedItem(), fields[side][2].getText().trim(), tls[side].isSelected());
+                ConnectionProfiles.save(profile); savedProfiles.put(profile.name(), profile); refreshSavedChoices(side, profile.name());
+            } catch (IOException | RuntimeException ex) {
+                JOptionPane.showMessageDialog(this, "Could not save connection profile: " + ex.getMessage(), "Save failed", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+
+        private void deleteProfile(int side) {
+            String name = (String) savedChoices.get(side).getSelectedItem();
+            if (name == null || name.equals("Choose saved connection") || !savedProfiles.containsKey(name)) {
+                JOptionPane.showMessageDialog(this, "Choose a saved connection to delete.", "No profile selected", JOptionPane.INFORMATION_MESSAGE); return;
+            }
+            if (JOptionPane.showConfirmDialog(this, "Delete saved connection '" + name + "'?", "Delete saved connection", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+            try { ConnectionProfiles.remove(name); savedProfiles.remove(name); refreshSavedChoices(side, null); }
+            catch (IOException ex) { JOptionPane.showMessageDialog(this, "Could not delete connection profile: " + ex.getMessage(), "Delete failed", JOptionPane.ERROR_MESSAGE); }
+        }
+
+        private void observeChanges(int side) {
+            javax.swing.event.DocumentListener listener = new javax.swing.event.DocumentListener() {
+                @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { invalidateTest(side); }
+                @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { invalidateTest(side); }
+                @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { invalidateTest(side); }
+            };
+            for (JTextField field : fields[side]) field.getDocument().addDocumentListener(listener);
+            passwords[side].getDocument().addDocumentListener(listener);
+            tls[side].addActionListener(e -> invalidateTest(side));
+        }
+
+        private void invalidateTest(int side) {
+            JComboBox<String> database = databases.get(side);
+            Object selectedDatabase = database.getSelectedItem(); if (selectedDatabase != null) preferredDatabase[side] = selectedDatabase.toString();
+            updatingDatabaseChoice[side] = true; database.removeAllItems(); database.setEnabled(false); updatingDatabaseChoice[side] = false;
+            testedSuccessfully[side] = false; testGenerations[side]++;
+            if (testStatus[side] != null) { testStatus[side].setText("Test required"); testStatus[side].setForeground(new Color(105, 118, 136)); }
+        }
+
+        private void requestConnect() {
+            autoConnectRequested = true;
+            for (int side = 0; side < 2; side++) if (!testedSuccessfully[side] && testButtons[side].isEnabled()) testConnection(side);
+            finishAutomaticConnect();
+        }
+
+        private void finishAutomaticConnect() {
+            if (!autoConnectRequested || !isDisplayable()) return;
+            for (JButton testButton : testButtons) if (!testButton.isEnabled()) return;
+            if (!testedSuccessfully[0] || !testedSuccessfully[1]) { autoConnectRequested = false; return; }
+            for (int side = 0; side < 2; side++) {
+                if (databases.get(side).getItemCount() == 0) { autoConnectRequested = false; return; }
+                if (databases.get(side).getSelectedItem() == null) {
+                    testStatus[side].setText("Choose a database to continue"); testStatus[side].setForeground(new Color(178, 112, 24)); return;
+                }
+            }
+            autoConnectRequested = false; accept();
+        }
+
+        private void testConnection(int side) {
+            if (!testButtons[side].isEnabled()) return;
+            try {
                 DatabaseEngine selectedEngine = (DatabaseEngine) engine.getSelectedItem();
-                for (int i = 0; i < 2; i++) endpoints[i] = new Endpoint(selectedEngine, fields[i][0].getText().trim(), Integer.parseInt(fields[i][1].getText().trim()), fields[i][2].getText().trim(), fields[i][3].getText().trim(), passwords[i].getPassword(), tls[i].isSelected());
+                String host = fields[side][0].getText().trim();
+                int port = Integer.parseInt(fields[side][1].getText().trim());
+                String user = fields[side][2].getText().trim();
+                char[] typedPassword = passwords[side].getPassword();
+                Endpoint endpoint;
+                try { endpoint = new Endpoint(selectedEngine, host, port, "", user, typedPassword, tls[side].isSelected()); }
+                finally { Arrays.fill(typedPassword, '\0'); }
+
+                testButtons[side].setEnabled(false); invalidateTest(side); testStatus[side].setText("Testing connection…");
+                int testGeneration = testGenerations[side];
+                new SwingWorker<List<String>, Void>() {
+                    @Override protected List<String> doInBackground() throws Exception {
+                        DatabaseConnector connector = null;
+                        try { connector = DatabaseConnectorFactory.create(endpoint); connector.connect(endpoint); return connector.listDatabases(); }
+                        finally { if (connector != null) connector.close(); endpoint.clearPassword(); }
+                    }
+                    @Override protected void done() {
+                        testButtons[side].setEnabled(true);
+                        if (testGeneration != testGenerations[side]) { finishAutomaticConnect(); return; }
+                        try {
+                            List<String> available = get(); JComboBox<String> choice = databases.get(side);
+                            updatingDatabaseChoice[side] = true;
+                            available.forEach(choice::addItem); choice.setSelectedIndex(-1);
+                            if (preferredDatabase[side] != null && available.contains(preferredDatabase[side])) choice.setSelectedItem(preferredDatabase[side]);
+                            else if (available.size() == 1) choice.setSelectedIndex(0);
+                            choice.setEnabled(!available.isEmpty()); testedSuccessfully[side] = true;
+                            updatingDatabaseChoice[side] = false;
+                            testStatus[side].setText(available.isEmpty() ? "Connected; no visible databases" : choice.getSelectedItem() == null ? "Connected · " + available.size() + " databases · choose one" : "Connected · database selected");
+                            testStatus[side].setForeground(available.isEmpty() ? new Color(178, 112, 24) : new Color(49, 130, 97));
+                            finishAutomaticConnect();
+                        } catch (InterruptedException ex) {
+                            Thread.currentThread().interrupt(); testedSuccessfully[side] = false; autoConnectRequested = false; testStatus[side].setText("Test interrupted");
+                        } catch (ExecutionException ex) {
+                            Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+                            testedSuccessfully[side] = false; autoConnectRequested = false; testStatus[side].setText("Connection failed"); testStatus[side].setForeground(new Color(178, 65, 65));
+                            JOptionPane.showMessageDialog(EndpointDialog.this, cause.getMessage() == null ? cause.toString() : cause.getMessage(), "Connection test failed", JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                }.execute();
+            } catch (RuntimeException ex) {
+                autoConnectRequested = false;
+                JOptionPane.showMessageDialog(this, "Check the connection fields: " + ex.getMessage(), "Invalid connection details", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+
+        private void accept() {
+            Endpoint[] selectedEndpoints = new Endpoint[2];
+            try {
+                DatabaseEngine selectedEngine = (DatabaseEngine) engine.getSelectedItem();
+                for (int i = 0; i < 2; i++) {
+                    String database = (String) databases.get(i).getSelectedItem();
+                    if (database == null) throw new IllegalArgumentException("Test the connection and choose a database for both endpoints");
+                    char[] typedPassword = passwords[i].getPassword();
+                    try { selectedEndpoints[i] = new Endpoint(selectedEngine, fields[i][0].getText().trim(), Integer.parseInt(fields[i][1].getText().trim()), database, fields[i][2].getText().trim(), typedPassword, tls[i].isSelected()); }
+                    finally { Arrays.fill(typedPassword, '\0'); }
+                }
+                endpoints = selectedEndpoints;
                 dispose();
-            } catch (RuntimeException ex) { JOptionPane.showMessageDialog(this, "Check the endpoint fields: " + ex.getMessage(), "Invalid connection details", JOptionPane.WARNING_MESSAGE); }
+            } catch (RuntimeException ex) {
+                for (Endpoint endpoint : selectedEndpoints) if (endpoint != null) endpoint.clearPassword();
+                JOptionPane.showMessageDialog(this, "Check the connection fields: " + ex.getMessage(), "Invalid connection details", JOptionPane.WARNING_MESSAGE);
+            }
         }
     }
 }
