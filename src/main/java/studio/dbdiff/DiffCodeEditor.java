@@ -67,6 +67,7 @@ final class DiffCodeEditor extends JPanel {
 
     void setFontSize(int size) {
         text.setFont(CODE_FONT.deriveFont((float) size));
+        text.applyLineColors(text.rows(), text.dark);
         gutter.revalidate();
         gutter.repaint();
     }
@@ -116,6 +117,10 @@ final class DiffCodeEditor extends JPanel {
             StyledDocument document = getStyledDocument();
             SimpleAttributeSet textAttributes = new SimpleAttributeSet();
             StyleConstants.setForeground(textAttributes, palette.foreground());
+            StyleConstants.setFontFamily(textAttributes, getFont().getFamily());
+            StyleConstants.setFontSize(textAttributes, getFont().getSize());
+            StyleConstants.setBold(textAttributes, getFont().isBold());
+            StyleConstants.setItalic(textAttributes, getFont().isItalic());
             document.setCharacterAttributes(0, document.getLength(), textAttributes, true);
             for (int i = 0; i < rows.size() && i < document.getDefaultRootElement().getElementCount(); i++) {
                 Element paragraph = document.getDefaultRootElement().getElement(i);

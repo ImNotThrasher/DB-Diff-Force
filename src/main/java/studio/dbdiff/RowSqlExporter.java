@@ -7,24 +7,32 @@ import java.util.*;
 public final class RowSqlExporter {
     private RowSqlExporter() { }
     public static String export(RowDiff.Result result, boolean inserts, boolean updates, boolean deletes) {
+        return export(result, inserts, updates, deletes, false);
+    }
+
+    public static String export(RowDiff.Result result, boolean inserts, boolean updates, boolean deletes, boolean transaction) {
         StringBuilder sql = new StringBuilder("-- " + AppInfo.NAME + " row export\n-- Review before use. This file was not executed.\n");
         if (result.truncated()) sql.append("-- WARNING: comparison was truncated; this export contains only the retained first changes.\n");
         sql.append("\n");
         String table = quote(result.targetDatabase()) + "." + quote(result.table().name());
+        StringBuilder statements = new StringBuilder();
         for (RowDiff.RowChange change : result.changes()) {
             switch (change.status()) {
-                case SOURCE_ONLY -> { if (inserts) sql.append("INSERT INTO ").append(table).append(" (").append(columnList(result.columns())).append(") VALUES (").append(values(result.columns(), change.source())).append(");\n"); }
-                case TARGET_ONLY -> { if (deletes) sql.append("DELETE FROM ").append(table).append(" WHERE ").append(predicate(result.primaryKey(), change.key())).append(" LIMIT 1;\n"); }
+                case SOURCE_ONLY -> { if (inserts) statements.append("INSERT INTO ").append(table).append(" (").append(columnList(result.columns())).append(") VALUES (").append(values(result.columns(), change.source())).append(");\n"); }
+                case TARGET_ONLY -> { if (deletes) statements.append("DELETE FROM ").append(table).append(" WHERE ").append(predicate(result.primaryKey(), change.key())).append(" LIMIT 1;\n"); }
                 case DIFFERENT -> {
                     if (!updates) continue;
                     List<RowDiff.Column> changed = result.columns().stream().filter(c -> !Objects.deepEquals(canonical(change.source().get(c.name())), canonical(change.target().get(c.name())))).toList();
                     if (changed.isEmpty()) continue;
-                    sql.append("UPDATE ").append(table).append(" SET ");
-                    for (int i = 0; i < changed.size(); i++) { if (i > 0) sql.append(", "); RowDiff.Column c = changed.get(i); sql.append(quote(c.name())).append(" = ").append(literal(change.source().get(c.name()), c.type())); }
-                    sql.append(" WHERE ").append(predicate(result.primaryKey(), change.key())).append(" LIMIT 1;\n");
+                    statements.append("UPDATE ").append(table).append(" SET ");
+                    for (int i = 0; i < changed.size(); i++) { if (i > 0) statements.append(", "); RowDiff.Column c = changed.get(i); statements.append(quote(c.name())).append(" = ").append(literal(change.source().get(c.name()), c.type())); }
+                    statements.append(" WHERE ").append(predicate(result.primaryKey(), change.key())).append(" LIMIT 1;\n");
                 }
             }
         }
+        if (transaction && !statements.isEmpty()) sql.append("START TRANSACTION;\n\n");
+        sql.append(statements);
+        if (transaction && !statements.isEmpty()) sql.append("\nCOMMIT;\n");
         return sql.toString();
     }
     private static String predicate(List<RowDiff.Column> keys, Map<String, Object> row) {
