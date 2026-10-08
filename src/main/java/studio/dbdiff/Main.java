@@ -13,6 +13,7 @@ import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -22,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -33,7 +35,6 @@ import java.util.concurrent.Executors;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
@@ -54,6 +55,7 @@ import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.ListCellRenderer;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -65,7 +67,15 @@ public final class Main {
     private static final Path UI_PREFERENCES = Path.of(System.getProperty("user.home"), ".db-diff-studio", "ui.properties");
     private final JFrame frame = new JFrame(AppInfo.NAME);
     private final DefaultListModel<Object> resultModel = new DefaultListModel<>();
-    private final JList<Object> resultList = new JList<>(resultModel);
+    private final List<Object> allResultItems = new ArrayList<>();
+    private final JTextField objectSearch = new JTextField();
+    private final JList<Object> resultList = new JList<>(resultModel) {
+        @Override public String getToolTipText(MouseEvent event) {
+            int index = locationToIndex(event.getPoint());
+            if (index < 0 || !getCellBounds(index, index).contains(event.getPoint())) return null;
+            return ResultRenderer.tooltip(getModel().getElementAt(index));
+        }
+    };
     private final ComparisonView comparisonView = new ComparisonView();
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
@@ -117,10 +127,19 @@ public final class Main {
         JButton kinds = new JButton("Tipos ▾"); kinds.addActionListener(e -> kindMenu(kinds));
         layoutButton = new JButton(); layoutButton.addActionListener(e -> { stackedLayout = !stackedLayout; saveUiPreferences(); updateLayout(); });
         leftActions.add(layoutButton); leftActions.add(kinds); controls.add(objectsHeading, BorderLayout.WEST); controls.add(leftActions, BorderLayout.EAST);
-        resultList.setCellRenderer(new ResultRenderer()); resultList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION); resultList.addListSelectionListener(this::selectResult);
+        resultList.setCellRenderer(new ResultRenderer()); resultList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION); resultList.setFixedCellHeight(34); resultList.addListSelectionListener(this::selectResult); resultList.setToolTipText("");
         JScrollPane listScroll = new JScrollPane(resultList); listScroll.setBorder(BorderFactory.createLineBorder(new Color(223, 228, 235))); listScroll.getViewport().setBackground(Color.WHITE);
+        objectSearch.setToolTipText("Filtrar objetos por nombre o tipo");
+        objectSearch.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent event) { applyResultFilter(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent event) { applyResultFilter(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent event) { applyResultFilter(); }
+        });
+        JPanel listTop = new JPanel(); listTop.setOpaque(false); listTop.setLayout(new BoxLayout(listTop, BoxLayout.Y_AXIS));
+        listTop.add(objectSearch); listTop.add(Box.createVerticalStrut(5)); listTop.add(objectColumnsHeader());
+        JPanel listArea = new JPanel(new BorderLayout(0, 4)); listArea.setOpaque(false); listArea.add(listTop, BorderLayout.NORTH); listArea.add(listScroll, BorderLayout.CENTER);
         JLabel legend = new JLabel("  Verde: igual    Ámbar: modificado    Azul / gris: falta en un lado"); legend.setFont(new Font("Segoe UI", Font.PLAIN, 10)); legend.setForeground(new Color(105, 118, 136));
-        left.add(controls, BorderLayout.NORTH); left.add(listScroll, BorderLayout.CENTER); left.add(legend, BorderLayout.SOUTH);
+        left.add(controls, BorderLayout.NORTH); left.add(listArea, BorderLayout.CENTER); left.add(legend, BorderLayout.SOUTH);
         JPanel right = new JPanel(new BorderLayout(0, 8)); right.setBorder(new EmptyBorder(15, 12, 15, 16)); right.setBackground(Color.WHITE);
         right.add(comparisonView, BorderLayout.CENTER);
         workspaceSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right); workspaceSplit.setResizeWeight(.29); workspaceSplit.setDividerLocation(360); workspaceSplit.setBorder(null); split.add(workspaceSplit, BorderLayout.CENTER);
@@ -160,7 +179,7 @@ public final class Main {
             try {
                 List<SchemaObject> a = loadSelected(source, sourceObjects, selectedKinds, selectedKeys), b = loadSelected(target, targetObjects, selectedKinds, selectedKeys);
                 List<DiffEngine.Result> results = new DiffEngine().compare(a, b, selectedKinds, selectedKeys);
-                SwingUtilities.invokeLater(() -> { sourceObjects = mergeLoaded(sourceObjects, a); targetObjects = mergeLoaded(targetObjects, b); compared = true; results.forEach(r -> comparedKeys.add(r.key())); resultModel.clear(); results.forEach(resultModel::addElement); comparisonView.showMessage(""); setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios"); });
+                SwingUtilities.invokeLater(() -> { sourceObjects = mergeLoaded(sourceObjects, a); targetObjects = mergeLoaded(targetObjects, b); compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results); comparisonView.showMessage(""); setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios"); });
             } catch (SQLException ex) { SwingUtilities.invokeLater(() -> { setBusy(false, "Error al comparar"); error("No se pudieron leer las definiciones del esquema", ex); }); }
         });
     }
@@ -175,15 +194,56 @@ public final class Main {
         if (!compared) { showCatalog(); return; }
         List<SchemaObject> left = sourceObjects.stream().filter(o -> comparedKeys.contains(o.key())).toList();
         List<SchemaObject> right = targetObjects.stream().filter(o -> comparedKeys.contains(o.key())).toList();
-        List<DiffEngine.Result> values = new DiffEngine().compare(left, right, selectedKinds, comparedKeys); resultModel.clear(); values.forEach(resultModel::addElement);
+        List<DiffEngine.Result> values = new DiffEngine().compare(left, right, selectedKinds, comparedKeys); setResultItems(values);
     }
 
     private void showCatalog() {
-        resultModel.clear();
         TreeMap<SchemaObject.Key, SchemaObject.Key> keys = new TreeMap<>();
         sourceObjects.forEach(o -> keys.put(o.key(), o.key())); targetObjects.forEach(o -> keys.put(o.key(), o.key()));
-        for (SchemaObject.Key key : keys.keySet()) if (selectedKinds.contains(key.kind())) resultModel.addElement(new CatalogItem(key, sourceObjects.stream().anyMatch(o -> o.key().equals(key)), targetObjects.stream().anyMatch(o -> o.key().equals(key))));
+        List<CatalogItem> items = new ArrayList<>();
+        for (SchemaObject.Key key : keys.keySet()) if (selectedKinds.contains(key.kind())) items.add(new CatalogItem(key, sourceObjects.stream().anyMatch(o -> o.key().equals(key)), targetObjects.stream().anyMatch(o -> o.key().equals(key))));
+        setResultItems(items);
         comparisonView.showMessage("Objetos encontrados. Seleccioná uno o más y elegí Comparar.\nTodavía no se compararon las definiciones.");
+    }
+
+    private JPanel objectColumnsHeader() {
+        JPanel header = new JPanel(new BorderLayout()); header.setOpaque(false);
+        JLabel name = new JLabel("NOMBRE"); name.setFont(new Font("Segoe UI", Font.BOLD, 10)); name.setForeground(new Color(105, 118, 136));
+        JLabel type = new JLabel("TIPO", JLabel.LEFT); type.setFont(name.getFont()); type.setForeground(name.getForeground()); type.setPreferredSize(new Dimension(94, 22));
+        header.setBorder(new EmptyBorder(2, 26, 2, 6)); header.add(name, BorderLayout.CENTER); header.add(type, BorderLayout.EAST);
+        return header;
+    }
+
+    private void setResultItems(List<?> items) {
+        List<Object> selected = resultList.getSelectedValuesList();
+        allResultItems.clear(); allResultItems.addAll(items);
+        resultModel.clear();
+        String query = objectSearch.getText().trim().toLowerCase(Locale.ROOT);
+        for (Object item : allResultItems) if (matchesObjectSearch(item, query)) resultModel.addElement(item);
+        for (Object item : selected) {
+            int index = resultModel.indexOf(item);
+            if (index >= 0) resultList.addSelectionInterval(index, index);
+        }
+    }
+
+    private void applyResultFilter() {
+        String query = objectSearch.getText().trim().toLowerCase(Locale.ROOT);
+        List<Object> selected = resultList.getSelectedValuesList();
+        resultModel.clear();
+        for (Object item : allResultItems) if (matchesObjectSearch(item, query)) resultModel.addElement(item);
+        for (Object item : selected) {
+            int index = resultModel.indexOf(item);
+            if (index >= 0) resultList.addSelectionInterval(index, index);
+        }
+    }
+
+    private static boolean matchesObjectSearch(Object item, String query) {
+        return query.isEmpty() || (objectKey(item).name() + " " + kindName(objectKey(item).kind()))
+                .toLowerCase(Locale.ROOT).contains(query);
+    }
+
+    private static SchemaObject.Key objectKey(Object item) {
+        return item instanceof CatalogItem catalog ? catalog.key() : ((DiffEngine.Result) item).key();
     }
 
     private Set<SchemaObject.Key> selectedObjectKeys() {
@@ -331,18 +391,73 @@ public final class Main {
         comparisonView.setThemeColors(AppTheme.isDark(theme));
     }
 
-    private static final class ResultRenderer extends DefaultListCellRenderer {
+    private static final class ResultRenderer extends JPanel implements ListCellRenderer<Object> {
+        private final JLabel marker = new JLabel(" ", JLabel.CENTER);
+        private final JLabel name = new JLabel();
+        private final JLabel type = new JLabel();
+
+        ResultRenderer() {
+            super(new BorderLayout(4, 0));
+            marker.setPreferredSize(new Dimension(18, 20));
+            type.setPreferredSize(new Dimension(94, 20));
+            add(marker, BorderLayout.WEST); add(name, BorderLayout.CENTER); add(type, BorderLayout.EAST);
+            setBorder(new EmptyBorder(5, 6, 5, 6));
+            name.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            type.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        }
+
         @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
-            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, selected, focus);
+            SchemaObject.Key key = objectKey(value);
+            name.setText(key.name());
+            type.setText(kindName(key.kind()));
+            Color foreground = selected ? list.getSelectionForeground() : list.getForeground();
+            setBackground(selected ? list.getSelectionBackground() : list.getBackground());
+            name.setForeground(foreground); type.setForeground(selected ? foreground : new Color(105, 118, 136));
+            marker.setForeground(selected ? foreground : markerColor(value));
+            marker.setText(markerText(value));
+            return this;
+        }
+
+        static String tooltip(Object value) {
             if (value instanceof CatalogItem catalog) {
-                label.setText("  ○  " + catalog.key().name() + "   ·   " + kindName(catalog.key().kind()) + "   ·   sin comparar");
-                if (!selected) label.setForeground(new Color(105, 118, 136));
-            } else if (value instanceof DiffEngine.Result result) {
-                String marker = switch (result.status()) { case IDENTICAL -> "●"; case CHANGED -> "●"; case SOURCE_ONLY -> "◀"; case TARGET_ONLY -> "▶"; };
-                label.setText("  " + marker + "  " + result.key().name() + "   ·   " + kindName(result.key().kind()));
-                if (!selected) label.setForeground(switch (result.status()) { case IDENTICAL -> new Color(49, 130, 97); case CHANGED -> new Color(178, 112, 24); case SOURCE_ONLY -> new Color(56, 112, 184); case TARGET_ONLY -> new Color(111, 122, 140); });
+                if (!catalog.sourcePresent()) return "Pendiente de comparar · falta en origen";
+                if (!catalog.targetPresent()) return "Pendiente de comparar · falta en destino";
+                return "Pendiente de comparar · presente en origen y destino";
             }
-            label.setBorder(new EmptyBorder(10, 8, 10, 8)); return label;
+            DiffEngine.Result result = (DiffEngine.Result) value;
+            return switch (result.status()) {
+                case IDENTICAL -> "Definiciones idénticas en origen y destino";
+                case CHANGED -> "Definiciones diferentes · compará origen → destino";
+                case SOURCE_ONLY -> "Presente en origen · falta en destino";
+                case TARGET_ONLY -> "Presente en destino · falta en origen";
+            };
+        }
+
+        private static String markerText(Object value) {
+            if (value instanceof CatalogItem catalog) {
+                if (!catalog.sourcePresent()) return "◀";
+                if (!catalog.targetPresent()) return "▶";
+                return "○";
+            }
+            return switch (((DiffEngine.Result) value).status()) {
+                case IDENTICAL, CHANGED -> "●";
+                case SOURCE_ONLY -> "◀";
+                case TARGET_ONLY -> "▶";
+            };
+        }
+
+        private static Color markerColor(Object value) {
+            if (value instanceof CatalogItem catalog) {
+                if (!catalog.sourcePresent()) return new Color(56, 112, 184);
+                if (!catalog.targetPresent()) return new Color(111, 122, 140);
+                return new Color(105, 118, 136);
+            }
+            return switch (((DiffEngine.Result) value).status()) {
+                case IDENTICAL -> new Color(49, 130, 97);
+                case CHANGED -> new Color(178, 112, 24);
+                case SOURCE_ONLY -> new Color(56, 112, 184);
+                case TARGET_ONLY -> new Color(111, 122, 140);
+            };
         }
     }
 
