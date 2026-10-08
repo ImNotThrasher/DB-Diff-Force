@@ -10,6 +10,7 @@ import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.JSpinner;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
@@ -59,6 +60,7 @@ public final class AppTheme {
         UIManager.put("ComboBox.disabledForeground", dark ? new Color(157, 166, 178) : new Color(105, 116, 130));
         UIManager.put("ComboBox.selectionBackground", palette.selection());
         UIManager.put("ComboBox.selectionForeground", foreground);
+        UIManager.put("Spinner.background", panel); UIManager.put("Spinner.foreground", foreground);
         UIManager.put("TextField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("TextField.foreground", foreground);
         UIManager.put("PasswordField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("PasswordField.foreground", foreground);
         UIManager.put("Button.background", panel); UIManager.put("Button.foreground", foreground);
@@ -104,16 +106,30 @@ public final class AppTheme {
             button.setBackground(primary ? new Color(61, 117, 207) : panel); button.setForeground(primary ? Color.WHITE : foreground);
             if (!primary) button.setBorder(javax.swing.BorderFactory.createCompoundBorder(javax.swing.BorderFactory.createLineBorder(border), javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8)));
         } else if (node instanceof JToggleButton button) {
-            button.setBackground(button.isSelected() ? (dark ? DARK.selection() : LIGHT.selection()) : panel);
-            button.setForeground(foreground);
+            styleToggleButton(button, dark);
         } else if (node instanceof JCheckBox check) {
             check.setBackground(panel); check.setForeground(foreground);
         } else if (node instanceof JComboBox<?> combo) {
             combo.setBackground(panel); combo.setForeground(foreground);
+        } else if (node instanceof JSpinner spinner) {
+            spinner.setBackground(panel); spinner.setForeground(foreground);
         } else if (node instanceof JTextField field) {
             field.setBackground(dark ? DARK_BACKGROUND : Color.WHITE); field.setForeground(foreground); field.setCaretColor(foreground);
         }
         if (node instanceof Container container) for (Component child : container.getComponents()) applyTree(child, header, panel, foreground, border, dark);
+    }
+
+    /** Use explicit selected colors so the cross-platform Swing look does not fade active controls. */
+    static void styleToggleButton(JToggleButton button, boolean dark) {
+        ThemePalette palette = ThemePalette.forMode(dark);
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setFocusPainted(false);
+        button.setBackground(button.isSelected() ? new Color(49, 112, 190) : palette.panel());
+        button.setForeground(button.isSelected() ? Color.WHITE : palette.foreground());
+        button.setBorder(javax.swing.BorderFactory.createCompoundBorder(
+                javax.swing.BorderFactory.createLineBorder(button.isSelected() ? new Color(75, 143, 224) : palette.border()),
+                javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8)));
     }
 
     private static boolean systemUsesDarkTheme() {

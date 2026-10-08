@@ -65,6 +65,12 @@ final class DiffCodeEditor extends JPanel {
         gutter.setDark(dark);
     }
 
+    void setFontSize(int size) {
+        text.setFont(CODE_FONT.deriveFont((float) size));
+        gutter.revalidate();
+        gutter.repaint();
+    }
+
     JScrollPane scrollPane() { return scrollPane; }
 
     private static String tooltip(DiffEngine.DiffLine line) {

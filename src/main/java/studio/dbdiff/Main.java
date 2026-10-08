@@ -54,6 +54,7 @@ import javax.swing.JPasswordField;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.JSpinner;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListCellRenderer;
@@ -91,8 +92,10 @@ public final class Main {
     private boolean compared;
     private boolean stackedLayout;
     private String theme = "Sistema";
+    private int codeFontSize = 13;
     private JPanel headerPanel, leftPanel;
     private JSplitPane workspaceSplit;
+    private JSplitPane comparisonSplit;
     private JButton layoutButton;
     private final Set<SchemaObject.Key> comparedKeys = new TreeSet<>();
     private final Set<SchemaObject.Key> loadedSourceKeys = ConcurrentHashMap.newKeySet();
@@ -115,6 +118,7 @@ public final class Main {
         frame.setMinimumSize(new Dimension(1020, 680)); frame.setSize(1260, 820); frame.setLocationRelativeTo(null);
         frame.setLayout(new BorderLayout(0, 0)); frame.add(header(), BorderLayout.NORTH); frame.add(content(), BorderLayout.CENTER); frame.add(statusBar(), BorderLayout.SOUTH);
         applyTheme(); frame.setVisible(true);
+        SwingUtilities.invokeLater(() -> comparisonSplit.setDividerLocation(.89));
     }
 
     private JComponent header() {
@@ -131,9 +135,9 @@ public final class Main {
         JButton compare = button("Comparar", false); compare.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compare.setIconTextGap(7); compare.addActionListener(e -> compare());
         JButton rows = button("Comparar filas", false); rows.setIcon(UiIcons.themed(UiIcons.COMPARE_ROWS, 16)); rows.setIconTextGap(7); rows.addActionListener(e -> compareRows());
         JButton export = button("Exportar SQL", false); export.setIcon(UiIcons.themed(UiIcons.EXPORT, 16)); export.setIconTextGap(7); export.addActionListener(e -> export());
-        JComboBox<String> themeChoice = new JComboBox<>(new String[]{"Sistema", "Claro", "Oscuro"}); themeChoice.setSelectedItem(theme);
-        themeChoice.setToolTipText("Apariencia de la aplicación"); themeChoice.addActionListener(e -> { theme = (String) themeChoice.getSelectedItem(); saveUiPreferences(); applyTheme(); });
-        actions.add(connect); actions.add(compare); actions.add(rows); actions.add(export); actions.add(themeChoice); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
+        JButton settings = button("Configuración", false); settings.setIcon(UiIcons.themed(UiIcons.SETTINGS, 16)); settings.setIconTextGap(6);
+        settings.setToolTipText("Tema y fuente del comparador"); settings.addActionListener(e -> showSettings());
+        actions.add(connect); actions.add(compare); actions.add(rows); actions.add(export); actions.add(settings); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
     }
 
     private JComponent content() {
@@ -164,9 +168,11 @@ public final class Main {
         JPanel legend = objectStatusLegend();
         left.add(controls, BorderLayout.NORTH); left.add(listArea, BorderLayout.CENTER); left.add(legend, BorderLayout.SOUTH);
         JPanel right = new JPanel(new BorderLayout(0, 8)); right.setBorder(new EmptyBorder(15, 12, 15, 16)); right.setBackground(Color.WHITE);
-        JPanel comparisonArea = new JPanel(new BorderLayout(0, 6)); comparisonArea.setOpaque(false);
-        comparisonArea.add(comparisonView, BorderLayout.CENTER); comparisonArea.add(rowComparisonPanel, BorderLayout.SOUTH);
-        right.add(comparisonArea, BorderLayout.CENTER);
+        comparisonSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, comparisonView, rowComparisonPanel);
+        comparisonSplit.setResizeWeight(.72); comparisonSplit.setDividerSize(9); comparisonSplit.setContinuousLayout(true);
+        comparisonSplit.setBorder(null); comparisonView.setMinimumSize(new Dimension(100, 180));
+        rowComparisonPanel.setMinimumSize(new Dimension(100, 48));
+        right.add(comparisonSplit, BorderLayout.CENTER);
         workspaceSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right); workspaceSplit.setResizeWeight(.29); workspaceSplit.setDividerLocation(360); workspaceSplit.setBorder(null); split.add(workspaceSplit, BorderLayout.CENTER);
         updateLayout();
         return split;
@@ -359,6 +365,7 @@ public final class Main {
     }
 
     private void rowPanelExpanded(boolean expanded) {
+        if (comparisonSplit != null) comparisonSplit.setDividerLocation(expanded ? .64 : .88);
         if (expanded) compareRowsForSelection();
     }
 
@@ -562,13 +569,15 @@ public final class Main {
             try (var input = Files.newInputStream(UI_PREFERENCES)) { values.load(input); }
             theme = Set.of("Sistema", "Claro", "Oscuro").contains(values.getProperty("theme")) ? values.getProperty("theme") : "Sistema";
             stackedLayout = Boolean.parseBoolean(values.getProperty("stackedLayout", "false"));
+            try { codeFontSize = Math.clamp(Integer.parseInt(values.getProperty("codeFontSize", "13")), 10, 24); }
+            catch (NumberFormatException ignored) { codeFontSize = 13; }
         } catch (IOException ignored) { }
     }
 
     private void saveUiPreferences() {
         try {
             Files.createDirectories(UI_PREFERENCES.getParent());
-            java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout));
+            java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout)); values.setProperty("codeFontSize", Integer.toString(codeFontSize));
             try (var output = Files.newOutputStream(UI_PREFERENCES)) { values.store(output, AppInfo.NAME + " appearance"); }
         } catch (IOException ex) { connectionStatus.setText("No se pudo guardar la apariencia: " + ex.getMessage()); }
     }
@@ -578,7 +587,9 @@ public final class Main {
         boolean dark = AppTheme.isDark(theme);
         comparisonView.setThemeColors(dark);
         rowComparisonPanel.setThemeColors(dark);
+        comparisonView.setCodeFontSize(codeFontSize);
         ThemePalette palette = ThemePalette.forMode(dark);
+        if (comparisonSplit != null) comparisonSplit.setBackground(palette.border());
         objectSearchBox.setBackground(palette.panel());
         objectSearchBox.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(palette.border()), new EmptyBorder(1, 8, 1, 7)));
@@ -586,6 +597,39 @@ public final class Main {
         Color[] lightLegendColors = {new Color(49, 130, 97), new Color(178, 112, 24), new Color(56, 112, 184), new Color(111, 122, 140)};
         Color[] darkLegendColors = {new Color(111, 204, 148), new Color(230, 174, 85), new Color(107, 166, 239), new Color(154, 166, 181)};
         for (int i = 0; i < objectLegendMarkers.size(); i++) objectLegendMarkers.get(i).setForeground(dark ? darkLegendColors[i] : lightLegendColors[i]);
+    }
+
+    private void showSettings() {
+        JComboBox<String> themeChoice = new JComboBox<>(new String[]{"Sistema", "Claro", "Oscuro"});
+        themeChoice.setSelectedItem(theme);
+        JSpinner fontSize = new JSpinner(new javax.swing.SpinnerNumberModel(codeFontSize, 10, 24, 1));
+        JPanel form = new JPanel(new GridBagLayout());
+        GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(7, 6, 7, 6); c.anchor = GridBagConstraints.WEST;
+        c.gridx = 0; c.gridy = 0; form.add(new JLabel("Tema"), c);
+        c.gridx = 1; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1; form.add(themeChoice, c);
+        c.gridx = 0; c.gridy = 1; c.fill = GridBagConstraints.NONE; c.weightx = 0; form.add(new JLabel("Tamaño de fuente del código"), c);
+        c.gridx = 1; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1; form.add(fontSize, c);
+        JLabel fontInfo = new JLabel("JetBrains Mono se toma de las fuentes instaladas. Si falta, se usa Consolas y luego una fuente monoespaciada del sistema.");
+        fontInfo.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        JLabel storageInfo = new JLabel("Perfiles y preferencias: " + Path.of(System.getProperty("user.home"), ".db-diff-studio").toAbsolutePath()
+                + " · contraseñas: almacén seguro del sistema operativo.");
+        storageInfo.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        JPanel notes = new JPanel(); notes.setLayout(new BoxLayout(notes, BoxLayout.Y_AXIS));
+        notes.add(fontInfo); notes.add(Box.createVerticalStrut(5)); notes.add(storageInfo);
+        JButton cancel = new JButton("Cancelar"), save = new JButton("Guardar");
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); actions.add(cancel); actions.add(save);
+        JPanel content = new JPanel(new BorderLayout(8, 12)); content.setBorder(new EmptyBorder(12, 14, 12, 14));
+        content.add(form, BorderLayout.CENTER); content.add(notes, BorderLayout.SOUTH);
+        JDialog dialog = new JDialog(frame, "Configuración", true);
+        dialog.setLayout(new BorderLayout(0, 8)); dialog.add(content, BorderLayout.CENTER); dialog.add(actions, BorderLayout.SOUTH);
+        cancel.addActionListener(event -> dialog.dispose());
+        save.addActionListener(event -> {
+            theme = (String) themeChoice.getSelectedItem(); codeFontSize = (Integer) fontSize.getValue();
+            saveUiPreferences(); applyTheme(); dialog.dispose();
+        });
+        dialog.getRootPane().setDefaultButton(save);
+        dialog.pack(); AppTheme.apply(dialog, null, theme); dialog.setMinimumSize(new Dimension(590, dialog.getHeight()));
+        dialog.setLocationRelativeTo(frame); dialog.setVisible(true);
     }
 
     private static final class ResultRenderer extends JPanel implements ListCellRenderer<Object> {

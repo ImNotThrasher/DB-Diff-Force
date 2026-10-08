@@ -24,6 +24,7 @@ final class UiIcons {
     static final Ikon VIEW = Material2MZ.PAGEVIEW;
     static final Ikon PROCEDURE = Material2AL.CODE;
     static final Ikon FUNCTION = Material2AL.FUNCTIONS;
+    static final Ikon SETTINGS = Material2MZ.SETTINGS;
 
     private UiIcons() { }
 

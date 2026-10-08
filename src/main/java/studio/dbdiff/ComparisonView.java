@@ -58,16 +58,19 @@ public final class ComparisonView extends JPanel {
         ThemePalette palette = ThemePalette.forMode(dark);
         Color panel = palette.panel();
         Color foreground = palette.foreground();
-        Color selected = palette.selection();
         setBackground(panel); cards.setBackground(panel);
         databasePair.setForeground(foreground); summary.setForeground(foreground);
         sourceHeading.setForeground(foreground); targetHeading.setForeground(foreground); unifiedHeading.setForeground(foreground);
         for (DiffCodeEditor editor : List.of(source, target, unified)) editor.setThemeColors(dark);
         if (splitModeButton != null) {
-            splitModeButton.setForeground(foreground); splitModeButton.setBackground(splitModeButton.isSelected() ? selected : panel);
-            unifiedModeButton.setForeground(foreground); unifiedModeButton.setBackground(unifiedModeButton.isSelected() ? selected : panel);
+            AppTheme.styleToggleButton(splitModeButton, dark);
+            AppTheme.styleToggleButton(unifiedModeButton, dark);
         }
         if (current != null) showResult(current, dark);
+    }
+
+    public void setCodeFontSize(int size) {
+        for (DiffCodeEditor editor : List.of(source, target, unified)) editor.setFontSize(size);
     }
 
     public void showMessage(String text) {
@@ -108,7 +111,13 @@ public final class ComparisonView extends JPanel {
         return panel;
     }
 
-    private void showMode(String mode) { ((CardLayout) cards.getLayout()).show(cards, mode); }
+    private void showMode(String mode) {
+        ((CardLayout) cards.getLayout()).show(cards, mode);
+        if (splitModeButton != null) {
+            AppTheme.styleToggleButton(splitModeButton, dark);
+            AppTheme.styleToggleButton(unifiedModeButton, dark);
+        }
+    }
 
     private static String displayName(String name) { return name == null || name.isBlank() ? "(sin seleccionar)" : name; }
 
