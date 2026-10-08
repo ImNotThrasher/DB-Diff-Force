@@ -5,6 +5,22 @@ import java.util.*;
 
 /** Shared read-only connector for MySQL-family engines. */
 abstract class MySqlFamilyConnector implements DatabaseConnector {
+    private static final Set<String> SQL_WORDS = Set.of(
+            "add", "after", "algorithm", "all", "alter", "and", "as", "asc", "auto_increment", "begin", "between",
+            "bigint", "binary", "bit", "blob", "bool", "boolean", "by", "call", "case", "cascade", "char", "character",
+            "charset", "check", "collate", "column", "comment", "condition", "constraint", "contains", "continue", "create",
+            "cross", "current_date", "current_time", "current_timestamp", "data", "date", "datetime", "decimal", "declare",
+            "default", "definer", "delete", "delimiter", "desc", "deterministic", "distinct", "do", "double", "drop", "else",
+            "elseif", "end", "engine", "enum", "escape", "exists", "false", "float", "for", "foreign", "from", "fulltext",
+            "function", "generated", "group", "having", "if", "in", "index", "inner", "insert", "int", "integer", "intersect",
+            "into", "is", "iterate", "join", "json", "key", "language", "leave", "left", "like", "limit", "loop", "longblob",
+            "longtext", "match", "mediumblob", "mediumint", "mediumtext", "modifies", "not", "null", "numeric", "on", "or", "order",
+            "out", "outer", "primary", "procedure", "range", "read", "reads", "real", "references", "release", "rename", "repeat",
+            "replace", "returns", "right", "rollback", "row_format", "schema", "security", "select", "set", "signal", "smallint",
+            "spatial", "sql", "sqlstate", "sqlwarning", "start", "stored", "table", "then", "time", "timestamp", "tinyblob",
+            "tinyint", "tinytext", "true", "truncate", "union", "unique", "unsigned", "update", "use", "using", "values", "varbinary",
+            "varchar", "view", "virtual", "when", "where", "while", "with", "year", "zerofill", "innodb", "myisam", "aria", "memory"
+    );
     private final DatabaseEngine engine;
     private Connection connection;
     private String database;
@@ -109,10 +125,10 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         String summary = text.toString();
         try {
             String ddl = showCreate(key, 2);
-            return new SchemaObject(key, ddl, normalize(ddl).replaceAll("(?i)AUTO_INCREMENT\\s*=\\s*\\d+", "AUTO_INCREMENT=<value>"));
+            return new SchemaObject(key, ddl, signature(ddl, true));
         } catch (SQLException ex) {
             String definition = "-- " + AppInfo.NAME + ": SHOW CREATE TABLE unavailable (" + safeMessage(ex) + ")\n-- Schema summary for review only; no executable DDL follows.\n" + summary;
-            return new SchemaObject(key, definition, normalize(definition));
+            return new SchemaObject(key, definition, signature(definition, false));
         }
     }
 
@@ -239,13 +255,13 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     }
 
     private SchemaObject loadView(SchemaObject.Key key) throws SQLException {
-        try { String definition = showCreate(key, 2); return new SchemaObject(key, definition, normalize(definition)); }
-        catch (SQLException ex) { String definition = "-- " + AppInfo.NAME + ": SHOW CREATE VIEW unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, normalize(definition)); }
+        try { String definition = showCreate(key, 2); return new SchemaObject(key, definition, signature(definition, false)); }
+        catch (SQLException ex) { String definition = "-- " + AppInfo.NAME + ": SHOW CREATE VIEW unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, signature(definition, false)); }
     }
 
     private SchemaObject loadRoutine(SchemaObject.Key key) throws SQLException {
-        try { String definition = showCreate(key, 3); return new SchemaObject(key, definition, normalize(definition)); }
-        catch (SQLException ex) { String definition = "-- " + AppInfo.NAME + ": SHOW CREATE " + key.kind() + " unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, normalize(definition)); }
+        try { String definition = showCreate(key, 3); return new SchemaObject(key, definition, signature(definition, false)); }
+        catch (SQLException ex) { String definition = "-- " + AppInfo.NAME + ": SHOW CREATE " + key.kind() + " unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, signature(definition, false)); }
     }
 
     private String showCreate(SchemaObject.Key key, int ddlColumn) throws SQLException {
@@ -270,6 +286,92 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     private static String normalize(String value) {
         if (value == null) return "<definition unavailable: insufficient privileges or unsupported object>";
         return value.replace("\r\n", "\n").replace('\r', '\n').lines().map(String::stripTrailing).toList().stream().collect(java.util.stream.Collectors.joining("\n")).strip();
+    }
+
+    /**
+     * Canonicalizes formatting for equality checks while leaving the displayed
+     * SHOW CREATE text intact. Whitespace inside string and quoted identifiers
+     * remains significant; table AUTO_INCREMENT counters are volatile metadata.
+     */
+    private static String signature(String ddl, boolean table) {
+        StringBuilder result = new StringBuilder(ddl.length());
+        char quote = 0;
+        boolean pendingWhitespace = false;
+        for (int i = 0; i < ddl.length(); i++) {
+            char c = ddl.charAt(i);
+            if (quote != 0) {
+                result.append(c);
+                if ((quote == '\'' || quote == '"') && c == '\\' && i + 1 < ddl.length()) {
+                    result.append(ddl.charAt(++i));
+                } else if (c == quote) {
+                    if (i + 1 < ddl.length() && ddl.charAt(i + 1) == quote) result.append(ddl.charAt(++i));
+                    else quote = 0;
+                }
+                continue;
+            }
+
+            if (table && ddl.regionMatches(true, i, "AUTO_INCREMENT", 0, "AUTO_INCREMENT".length())
+                    && isWordBoundary(ddl, i - 1) && isWordBoundary(ddl, i + "AUTO_INCREMENT".length())) {
+                int cursor = i + "AUTO_INCREMENT".length();
+                while (cursor < ddl.length() && Character.isWhitespace(ddl.charAt(cursor))) cursor++;
+                if (cursor < ddl.length() && ddl.charAt(cursor) == '=') {
+                    cursor++;
+                    while (cursor < ddl.length() && Character.isWhitespace(ddl.charAt(cursor))) cursor++;
+                    int digits = cursor;
+                    while (cursor < ddl.length() && Character.isDigit(ddl.charAt(cursor))) cursor++;
+                    if (cursor > digits) {
+                        appendCanonicalSpace(result, pendingWhitespace, 'A');
+                        result.append("AUTO_INCREMENT=<value>");
+                        pendingWhitespace = false;
+                        i = cursor - 1;
+                        continue;
+                    }
+                }
+            }
+
+            if (isSqlWordStart(c)) {
+                int end = i + 1;
+                while (end < ddl.length() && isSqlWordPart(ddl.charAt(end))) end++;
+                String word = ddl.substring(i, end);
+                appendCanonicalSpace(result, pendingWhitespace, c);
+                result.append(SQL_WORDS.contains(word.toLowerCase(Locale.ROOT)) ? word.toUpperCase(Locale.ROOT) : word);
+                pendingWhitespace = false;
+                i = end - 1;
+                continue;
+            }
+
+            if (c == '\'' || c == '"' || c == '`') {
+                appendCanonicalSpace(result, pendingWhitespace, c);
+                pendingWhitespace = false;
+                result.append(c);
+                quote = c;
+            } else if (Character.isWhitespace(c)) {
+                pendingWhitespace = true;
+            } else {
+                if (isCanonicalPunctuation(c)) {
+                    while (!result.isEmpty() && result.charAt(result.length() - 1) == ' ')
+                        result.setLength(result.length() - 1);
+                } else appendCanonicalSpace(result, pendingWhitespace, c);
+                pendingWhitespace = false;
+                result.append(c);
+            }
+        }
+        return result.toString().strip();
+    }
+
+    private static void appendCanonicalSpace(StringBuilder output, boolean pending, char next) {
+        if (!pending || output.isEmpty()) return;
+        char previous = output.charAt(output.length() - 1);
+        if (!isCanonicalPunctuation(previous) && !isCanonicalPunctuation(next)) output.append(' ');
+    }
+
+    private static boolean isCanonicalPunctuation(char c) { return c == '(' || c == ')' || c == ',' || c == '.'; }
+    private static boolean isSqlWordStart(char c) { return Character.isLetter(c) || c == '_'; }
+    private static boolean isSqlWordPart(char c) { return Character.isLetterOrDigit(c) || c == '_' || c == '$'; }
+    private static boolean isWordBoundary(String value, int index) {
+        if (index < 0 || index >= value.length()) return true;
+        char c = value.charAt(index);
+        return !Character.isLetterOrDigit(c) && c != '_';
     }
     private static String safeMessage(SQLException ex) { return ex.getMessage() == null ? ex.getSQLState() : ex.getMessage().replaceAll("[\\r\\n]+", " "); }
     private static String encodePath(String path) { return path.replace("%", "%25").replace("/", "%2F").replace("?", "%3F").replace("#", "%23"); }

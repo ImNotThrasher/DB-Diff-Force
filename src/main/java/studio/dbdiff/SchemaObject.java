@@ -8,7 +8,9 @@ public record SchemaObject(Key key, String definition, String signature) {
         public Key { Objects.requireNonNull(kind); Objects.requireNonNull(name); }
         @Override public int compareTo(Key other) {
             int typeOrder = kind.compareTo(other.kind);
-            return typeOrder != 0 ? typeOrder : name.compareToIgnoreCase(other.name);
+            if (typeOrder != 0) return typeOrder;
+            int insensitiveOrder = name.compareToIgnoreCase(other.name);
+            return insensitiveOrder != 0 ? insensitiveOrder : name.compareTo(other.name);
         }
         @Override public String toString() { return kind + " · " + name; }
     }

@@ -16,7 +16,8 @@ public final class DiffEngine {
             if (!kinds.contains(key.kind()) || (!selected.isEmpty() && !selected.contains(key))) continue;
             SchemaObject a = left.get(key), b = right.get(key);
             Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : a.signature().equals(b.signature()) ? Status.IDENTICAL : Status.CHANGED;
-            List<DiffLine> diff = a != null && b != null ? unified(a.definition(), b.definition())
+            List<DiffLine> diff = a != null && b != null
+                    ? status == Status.IDENTICAL ? equivalentLines(a.definition(), b.definition()) : unified(a.definition(), b.definition())
                     : a != null ? oneSided(a.definition(), false) : oneSided(b.definition(), true);
             results.add(new Result(key, status, a, b, diff));
         }
@@ -56,6 +57,20 @@ public final class DiffEngine {
         for (int i = 0; i < lines.length; i++) result.add(targetOnly
                 ? new DiffLine(LineType.ADDED, lines[i], null, i + 1)
                 : new DiffLine(LineType.REMOVED, lines[i], i + 1, null));
+        return List.copyOf(result);
+    }
+
+    /** Avoid red/green line markers when only server formatting differs. */
+    private static List<DiffLine> equivalentLines(String source, String target) {
+        String[] left = source.split("\n", -1), right = target.split("\n", -1);
+        int count = Math.max(left.length, right.length);
+        List<DiffLine> result = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            String text = i < left.length ? left[i] : right[i];
+            result.add(new DiffLine(LineType.CONTEXT, text,
+                    i < left.length ? i + 1 : null,
+                    i < right.length ? i + 1 : null));
+        }
         return List.copyOf(result);
     }
 }
