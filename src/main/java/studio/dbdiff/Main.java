@@ -150,7 +150,7 @@ public final class Main {
         brand.add(logo, BorderLayout.WEST); brand.add(brandText, BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4)); actions.setOpaque(false);
         JButton connect = button("Nueva comparación", true); connect.setIcon(UiIcons.themed(UiIcons.CONNECT, 16)); connect.setIconTextGap(7); connect.putClientProperty("dbdiff.primary", Boolean.TRUE); connect.setToolTipText("Elegir el modo de origen y configurar las conexiones."); connect.addActionListener(e -> connect());
-        compareButton = button("Comparar", false); compareButton.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compareButton.setIconTextGap(7); compareButton.addActionListener(e -> compare());
+        compareButton = button("Actualizar", false); compareButton.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compareButton.setIconTextGap(7); compareButton.addActionListener(e -> compare(true));
         exportButton = button("Exportar SQL", false); exportButton.setIcon(UiIcons.themed(UiIcons.EXPORT, 16)); exportButton.setIconTextGap(7); exportButton.addActionListener(e -> export());
         JButton settings = button("Configuración", false); settings.setIcon(UiIcons.themed(UiIcons.SETTINGS, 16)); settings.setIconTextGap(6);
         settings.setToolTipText("Tema y fuente del comparador"); settings.addActionListener(e -> showSettings());
@@ -276,13 +276,7 @@ public final class Main {
                     loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
                     compared = false; comparedKeys.clear(); rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
                     showCatalog(); setConnectionAvailable(true); refreshDependencyStatus();
-                    String label = switch (selection.mode()) {
-                        case DATABASE -> "Conectado";
-                        case SNAPSHOT -> "Snapshot cargado y destino conectado";
-                        case FLYWAY -> "Flyway reconstruido y destino conectado";
-                    };
-                    setBusy(false, label + " · Origen: " + sourceDatabase + " → Destino: " + targetDatabase
-                            + " · " + sourceObjects.size() + " / " + targetObjects.size() + " objetos · seleccioná un objeto o apretá Comparar");
+                    compare(false);
                 });
             } catch (SQLException | RuntimeException ex) {
                 SwingUtilities.invokeLater(() -> {
@@ -352,7 +346,7 @@ public final class Main {
         }
     }
 
-    private void compare() {
+    private void compare(boolean refreshCatalog) {
         if (source == null || target == null) { JOptionPane.showMessageDialog(frame, "Conectá ambas bases antes de comparar.", "Bases sin conexión", JOptionPane.INFORMATION_MESSAGE); return; }
         long request = ++comparisonRequest;
         selectionRequest++;
@@ -360,24 +354,38 @@ public final class Main {
         Set<SchemaObject.Key> selectedKeys = selectedObjectKeys();
         Set<SchemaObject.Kind> kinds = Set.copyOf(selectedKinds);
         Set<SchemaObject.Key> loadedA = Set.copyOf(loadedSourceKeys), loadedB = Set.copyOf(loadedTargetKeys);
-        List<SchemaObject> sourceCatalog = sourceObjects, targetCatalog = targetObjects;
+        List<SchemaObject> existingSourceCatalog = sourceObjects, existingTargetCatalog = targetObjects;
         SchemaSource sourceConnector = source; DatabaseConnector targetConnector = target;
         schemaComparisonRunning = true;
-        setBusy(true, "Comparando los tipos de objetos seleccionados…");
+        setBusy(true, refreshCatalog ? "Actualizando catálogo y comparación del esquema…" : "Comparando definiciones del esquema…");
         // Las lecturas JDBC y el diff corren fuera del EDT. El contador invalida
         // respuestas viejas si el usuario inicia otra comparación mientras tanto.
         worker.submit(() -> {
             try {
-                List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, loadedA), b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, loadedB);
+                List<SchemaObject> sourceCatalog = refreshCatalog ? sourceConnector.listObjects() : existingSourceCatalog;
+                List<SchemaObject> targetCatalog = refreshCatalog ? targetConnector.listObjects() : existingTargetCatalog;
+                DependencyReport refreshedSource = refreshCatalog && sourceConnector instanceof DatabaseConnector
+                        ? safeDependencyReport(sourceConnector) : sourceDependencyReport;
+                DependencyReport refreshedTarget = refreshCatalog ? safeDependencyReport(targetConnector) : targetDependencyReport;
+                Set<SchemaObject.Key> sourceCache = refreshCatalog ? Set.of() : loadedA;
+                Set<SchemaObject.Key> targetCache = refreshCatalog ? Set.of() : loadedB;
+                List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, sourceCache), b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, targetCache);
                 List<DiffEngine.Result> results = new DiffEngine().compare(a, b, kinds, selectedKeys);
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) return;
                     schemaComparisonRunning = false;
-                    sourceObjects = mergeLoaded(sourceObjects, a); targetObjects = mergeLoaded(targetObjects, b);
+                    sourceObjects = mergeLoaded(refreshCatalog ? sourceCatalog : sourceObjects, a);
+                    targetObjects = mergeLoaded(refreshCatalog ? targetCatalog : targetObjects, b);
+                    if (refreshCatalog) {
+                        loadedSourceKeys.clear(); loadedTargetKeys.clear(); comparedKeys.clear();
+                        sourceDependencyReport = refreshedSource; targetDependencyReport = refreshedTarget;
+                        sourceDependencies = sourceDependencyReport.dependencies(); targetDependencies = targetDependencyReport.dependencies();
+                    }
                     a.forEach(o -> loadedSourceKeys.add(o.key())); b.forEach(o -> loadedTargetKeys.add(o.key()));
                     compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results);
                     rowComparisonPanel.clearResult(false); selectedSchemaResult = null; comparisonView.showMessage("");
                     if (selectedKeys.size() == 1 && !results.isEmpty()) resultList.setSelectedValue(results.get(0), true);
+                    refreshDependencyStatus();
                     setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios");
                 });
             } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> { if (request != comparisonRequest) return; schemaComparisonRunning = false; setBusy(false, "Error al comparar"); error("No se pudieron leer las definiciones del esquema", ex); }); }
@@ -403,12 +411,13 @@ public final class Main {
 
     private void showCatalog() {
         rowComparisonPanel.clear();
+        setRowComparisonVisible(false);
         TreeMap<SchemaObject.Key, SchemaObject.Key> keys = new TreeMap<>();
         sourceObjects.forEach(o -> keys.put(o.key(), o.key())); targetObjects.forEach(o -> keys.put(o.key(), o.key()));
         List<CatalogItem> items = new ArrayList<>();
         for (SchemaObject.Key key : keys.keySet()) if (selectedKinds.contains(key.kind())) items.add(new CatalogItem(key, sourceObjects.stream().anyMatch(o -> o.key().equals(key)), targetObjects.stream().anyMatch(o -> o.key().equals(key))));
         setResultItems(items);
-        comparisonView.showMessage("Objetos encontrados. Seleccioná uno o más y elegí Comparar.\nTodavía no se compararon las definiciones.");
+        comparisonView.showMessage("Objetos encontrados. Preparando la comparación automática del esquema…");
     }
 
     private JPanel objectColumnsHeader() {
@@ -569,11 +578,14 @@ public final class Main {
         rowComparisonRequest++;
         selectedSchemaResult = null;
         rowComparisonPanel.clearResult(false);
+        if (resultList.getSelectedValuesList().size() > 1) setRowComparisonVisible(false);
         if (resultList.getSelectedValuesList().size() > 1) { setBusy(false, "Varios objetos seleccionados"); comparisonView.showMessage("Seleccionaste varios objetos. Elegí Comparar para analizarlos o seleccioná un resultado para ver sus detalles."); if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("Seleccioná una sola tabla para comparar filas."); return; }
         Object item = resultList.getSelectedValue();
         if (item != null) setBusy(false, "Objeto seleccionado · " + objectKey(item).qualifiedName());
-        if (item instanceof CatalogItem catalog) { loadCatalogSelection(catalog, request); return; }
-        if (!(item instanceof DiffEngine.Result selected)) { if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("Seleccioná una tabla para comparar sus filas."); return; }
+        if (item == null) setRowComparisonVisible(false);
+        if (item instanceof CatalogItem catalog) { setRowComparisonVisible(catalog.key().kind() == SchemaObject.Kind.TABLE); loadCatalogSelection(catalog, request); return; }
+        if (!(item instanceof DiffEngine.Result selected)) return;
+        setRowComparisonVisible(selected.key().kind() == SchemaObject.Kind.TABLE);
         selectedSchemaResult = selected;
         comparisonView.showResult(selected, AppTheme.isDark(theme));
         if (rowComparisonPanel.isExpanded()) {
@@ -585,6 +597,22 @@ public final class Main {
     private void rowPanelExpanded(boolean expanded) {
         if (comparisonSplit != null) comparisonSplit.setDividerLocation(expanded ? .64 : .88);
         if (expanded) compareRowsForSelection();
+    }
+
+    private void setRowComparisonVisible(boolean visible) {
+        boolean wasVisible = rowComparisonPanel.isVisible();
+        if (wasVisible == visible) return;
+        if (!visible) {
+            rowComparisonRequest++;
+            rowComparisonPanel.setExpanded(false);
+            rowComparisonPanel.clearResult(false);
+        }
+        rowComparisonPanel.setVisible(visible);
+        if (comparisonSplit != null) {
+            comparisonSplit.setDividerSize(visible ? 9 : 0);
+            comparisonSplit.setDividerLocation(visible ? .72 : 1.0);
+            comparisonSplit.revalidate();
+        }
     }
 
     private void compareRowsForSelection() {
