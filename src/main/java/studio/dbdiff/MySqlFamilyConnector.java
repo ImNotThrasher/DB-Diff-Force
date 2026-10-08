@@ -138,7 +138,7 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         String order = primaryKey.stream().map(c -> isText(c.type()) ? "CAST(" + quote(c.name()) + " AS BINARY)" : quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
         String query = "SELECT " + columnsSql + " FROM " + quote(database) + "." + quote(key.name()) + " ORDER BY " + order;
         String peerQuery = "SELECT " + columnsSql + " FROM " + quote(peer.database) + "." + quote(key.name()) + " ORDER BY " + order;
-        List<RowDiff.RowChange> changes = new ArrayList<>(); long[] counts = new long[3]; boolean truncated = false;
+        List<RowDiff.RowChange> changes = new ArrayList<>(); long[] counts = new long[4]; boolean truncated = false;
         try (PreparedStatement left = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
              PreparedStatement right = peer.connection.prepareStatement(peerQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
             left.setFetchSize(500); right.setFetchSize(500);
@@ -153,6 +153,7 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
                     } else if (comparison > 0) {
                         counts[1]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.TARGET_ONLY, keyOf(rowB, primaryKey), null, rowB)); hasB = b.next();
                     } else {
+                        counts[3]++;
                         if (!rowsEqual(rowA, rowB, columns)) {
                             counts[2]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.DIFFERENT, keyOf(rowA, primaryKey), rowA, rowB));
                         }
@@ -162,7 +163,7 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
             }
         }
         truncated = counts[0] + counts[1] + counts[2] > changes.size();
-        return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], truncated,
+        return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
                 truncated ? "Only the first " + maxChanges + " row changes are retained; export is limited to those rows." : "");
     }
 

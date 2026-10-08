@@ -52,7 +52,6 @@ import javax.swing.JPasswordField;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
-import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListCellRenderer;
@@ -80,6 +79,8 @@ public final class Main {
         }
     };
     private final ComparisonView comparisonView = new ComparisonView();
+    private final RowComparisonPanel rowComparisonPanel = new RowComparisonPanel((rows, options) ->
+            saveRowSql(rows, options.inserts(), options.updates(), options.deletes()));
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
     private DatabaseConnector source, target;
@@ -149,7 +150,9 @@ public final class Main {
         JPanel legend = objectStatusLegend();
         left.add(controls, BorderLayout.NORTH); left.add(listArea, BorderLayout.CENTER); left.add(legend, BorderLayout.SOUTH);
         JPanel right = new JPanel(new BorderLayout(0, 8)); right.setBorder(new EmptyBorder(15, 12, 15, 16)); right.setBackground(Color.WHITE);
-        right.add(comparisonView, BorderLayout.CENTER);
+        JPanel comparisonArea = new JPanel(new BorderLayout(0, 6)); comparisonArea.setOpaque(false);
+        comparisonArea.add(comparisonView, BorderLayout.CENTER); comparisonArea.add(rowComparisonPanel, BorderLayout.SOUTH);
+        right.add(comparisonArea, BorderLayout.CENTER);
         workspaceSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right); workspaceSplit.setResizeWeight(.29); workspaceSplit.setDividerLocation(360); workspaceSplit.setBorder(null); split.add(workspaceSplit, BorderLayout.CENTER);
         updateLayout();
         return split;
@@ -187,7 +190,7 @@ public final class Main {
             try {
                 List<SchemaObject> a = loadSelected(source, sourceObjects, selectedKinds, selectedKeys), b = loadSelected(target, targetObjects, selectedKinds, selectedKeys);
                 List<DiffEngine.Result> results = new DiffEngine().compare(a, b, selectedKinds, selectedKeys);
-                SwingUtilities.invokeLater(() -> { sourceObjects = mergeLoaded(sourceObjects, a); targetObjects = mergeLoaded(targetObjects, b); compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results); comparisonView.showMessage(""); setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios"); });
+                SwingUtilities.invokeLater(() -> { sourceObjects = mergeLoaded(sourceObjects, a); targetObjects = mergeLoaded(targetObjects, b); compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results); rowComparisonPanel.clear(); comparisonView.showMessage(""); setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios"); });
             } catch (SQLException ex) { SwingUtilities.invokeLater(() -> { setBusy(false, "Error al comparar"); error("No se pudieron leer las definiciones del esquema", ex); }); }
         });
     }
@@ -206,6 +209,7 @@ public final class Main {
     }
 
     private void showCatalog() {
+        rowComparisonPanel.clear();
         TreeMap<SchemaObject.Key, SchemaObject.Key> keys = new TreeMap<>();
         sourceObjects.forEach(o -> keys.put(o.key(), o.key())); targetObjects.forEach(o -> keys.put(o.key(), o.key()));
         List<CatalogItem> items = new ArrayList<>();
@@ -286,8 +290,9 @@ public final class Main {
 
     private void selectResult(ListSelectionEvent e) {
         if (e.getValueIsAdjusting()) return;
-        if (resultList.getSelectedValuesList().size() > 1) { comparisonView.showMessage("Seleccionaste varios objetos. Elegí Comparar para analizarlos o seleccioná un resultado para ver sus detalles."); return; }
+        if (resultList.getSelectedValuesList().size() > 1) { rowComparisonPanel.clear(); comparisonView.showMessage("Seleccionaste varios objetos. Elegí Comparar para analizarlos o seleccioná un resultado para ver sus detalles."); return; }
         Object item = resultList.getSelectedValue();
+        if (item != null) rowComparisonPanel.clear();
         if (item instanceof CatalogItem catalog) { comparisonView.showMessage(catalog.key() + "\nEstado: SIN COMPARAR\nOrigen: " + (catalog.sourcePresent() ? "presente" : "faltante") + "\nDestino: " + (catalog.targetPresent() ? "presente" : "faltante") + "\n\nElegí Comparar para revisar las definiciones."); return; }
         if (!(item instanceof DiffEngine.Result selected)) return;
         comparisonView.showResult(selected, AppTheme.isDark(theme));
@@ -303,29 +308,9 @@ public final class Main {
         worker.submit(() -> {
             try {
                 RowDiff.Result rows = source.compareTableRows(target, selected.key(), 10000);
-                SwingUtilities.invokeLater(() -> { setBusy(false, "Comparación de filas lista · " + rows.sourceOnly() + " solo en origen · " + rows.targetOnly() + " solo en destino · " + rows.different() + " diferentes" + (rows.truncated() ? " · resultados limitados" : "")); showRowResults(rows); });
+                SwingUtilities.invokeLater(() -> { setBusy(false, "Filas revisadas · " + rows.matchedRows() + " claves coincidentes · " + rows.sourceOnly() + " solo en origen · " + rows.targetOnly() + " solo en destino · " + rows.different() + " diferentes" + (rows.truncated() ? " · resultados limitados" : "")); rowComparisonPanel.showResult(rows); });
             } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> { setBusy(false, "No se compararon las filas"); error("No se pudieron comparar las filas", ex); }); }
         });
-    }
-
-    private void showRowResults(RowDiff.Result rows) {
-        String[] headers = {"Estado", "Clave primaria", "Fila de origen", "Fila de destino"};
-        Object[][] data = new Object[rows.changes().size()][headers.length];
-        for (int i = 0; i < rows.changes().size(); i++) {
-            RowDiff.RowChange change = rows.changes().get(i);
-            data[i][0] = change.status(); data[i][1] = change.key(); data[i][2] = change.source(); data[i][3] = change.target();
-        }
-        JTable table = new JTable(data, headers); table.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN); table.setFillsViewportHeight(true);
-        JLabel summary = new JLabel("  " + rows.table().name() + "  ·  " + rows.sourceOnly() + " solo en origen  ·  " + rows.targetOnly() + " solo en destino  ·  " + rows.different() + " diferentes  ·  clave primaria: " + rows.primaryKey().stream().map(RowDiff.Column::name).collect(java.util.stream.Collectors.joining(", ")));
-        JPanel panel = new JPanel(new BorderLayout(0, 8)); panel.add(summary, BorderLayout.NORTH); panel.add(new JScrollPane(table), BorderLayout.CENTER);
-        if (rows.truncated()) { JLabel warning = new JLabel("Se conservan las primeras 10.000 filas modificadas. La exportación incluirá solo esas filas."); warning.setForeground(new Color(155, 79, 21)); panel.add(warning, BorderLayout.SOUTH); }
-        panel.setPreferredSize(new Dimension(980, 560));
-        JCheckBox inserts = new JCheckBox("INSERT: filas solo en origen", true), updates = new JCheckBox("UPDATE: filas diferentes", true), deletes = new JCheckBox("DELETE: filas solo en destino", false);
-        JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT)); options.add(inserts); options.add(updates); options.add(deletes);
-        JButton save = button("Exportar SQL de filas…", true); save.addActionListener(e -> saveRowSql(rows, inserts.isSelected(), updates.isSelected(), deletes.isSelected()));
-        JPanel controls = new JPanel(new BorderLayout()); controls.add(options, BorderLayout.CENTER); controls.add(save, BorderLayout.EAST);
-        JPanel content = new JPanel(new BorderLayout(0, 8)); content.add(panel, BorderLayout.CENTER); content.add(controls, BorderLayout.SOUTH);
-        JOptionPane.showMessageDialog(frame, content, "Comparación de filas", JOptionPane.PLAIN_MESSAGE);
     }
 
     private void saveRowSql(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes) {
@@ -415,6 +400,7 @@ public final class Main {
         AppTheme.apply(frame, headerPanel, theme);
         boolean dark = AppTheme.isDark(theme);
         comparisonView.setThemeColors(dark);
+        rowComparisonPanel.setThemeColors(dark);
         ThemePalette palette = ThemePalette.forMode(dark);
         objectSearchBox.setBackground(palette.panel());
         objectSearchBox.setBorder(BorderFactory.createCompoundBorder(

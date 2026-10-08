@@ -19,7 +19,7 @@ public final class RowDiff {
         private static Map<String, Object> immutable(Map<String, Object> values) { return values == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(values)); }
     }
     public record Result(String targetDatabase, SchemaObject.Key table, List<Column> columns, List<Column> primaryKey, List<RowChange> changes,
-                         long sourceOnly, long targetOnly, long different, boolean truncated, String warning) {
+                         long sourceOnly, long targetOnly, long different, long matchedRows, boolean truncated, String warning) {
         public Result { columns = List.copyOf(columns); primaryKey = List.copyOf(primaryKey); changes = List.copyOf(changes); }
     }
 }
