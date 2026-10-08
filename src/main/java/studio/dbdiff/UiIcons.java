@@ -25,6 +25,8 @@ final class UiIcons {
     static final Ikon PROCEDURE = Material2AL.CODE;
     static final Ikon FUNCTION = Material2AL.FUNCTIONS;
     static final Ikon SETTINGS = Material2MZ.SETTINGS;
+    static final Ikon SOURCE_ONLY = Material2AL.ARROW_LEFT;
+    static final Ikon TARGET_ONLY = Material2AL.ARROW_RIGHT;
 
     private UiIcons() { }
 
