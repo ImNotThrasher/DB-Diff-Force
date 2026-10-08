@@ -9,12 +9,20 @@ import java.util.*;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 final class ConnectionDialog extends JDialog {
-    private Endpoint[] endpoints;
-    static Endpoint[] showDialog(JFrame owner, String theme) {
+    enum SourceMode {
+        DATABASE("Base de datos"), SNAPSHOT("Snapshot SQL"), FLYWAY("Migraciones Flyway");
+        private final String label;
+        SourceMode(String label) { this.label = label; }
+        @Override public String toString() { return label; }
+    }
+    record Selection(SourceMode mode, Endpoint origin, Endpoint destination, java.nio.file.Path sourceFolder) { }
+
+    private Selection selection;
+    static Selection showDialog(JFrame owner, String theme) {
         ConnectionDialog dialog = new ConnectionDialog(owner);
         AppTheme.apply(dialog, null, theme);
         dialog.setVisible(true);
-        return dialog.endpoints;
+        return dialog.selection;
     }
 
     private static JButton actionButton(String name, boolean primary) {
@@ -28,6 +36,7 @@ final class ConnectionDialog extends JDialog {
     private final JCheckBox[] rememberPasswords = {new JCheckBox("Recordar contraseña en este equipo"), new JCheckBox("Recordar contraseña en este equipo")};
     private final JCheckBox[] tls = {new JCheckBox("Usar TLS y verificar certificado"), new JCheckBox("Usar TLS y verificar certificado")};
     private final JComboBox<DatabaseEngine> engine = new JComboBox<>(DatabaseEngine.values());
+    private final JComboBox<SourceMode> sourceMode = new JComboBox<>(SourceMode.values());
     private final List<JComboBox<String>> databases = List.of(new JComboBox<>(), new JComboBox<>());
     private final List<JComboBox<String>> savedChoices = List.of(new JComboBox<>(), new JComboBox<>());
     private final JButton[] testButtons = new JButton[2];
@@ -39,60 +48,138 @@ final class ConnectionDialog extends JDialog {
     private final int[] testGenerations = new int[2];
     private final String[] preferredDatabase = new String[2];
     private boolean autoConnectRequested;
+    private final JPanel originCards = new JPanel(new CardLayout());
+    private final JTextField sourceFolderField = new JTextField();
+    private final JLabel sourceCardTitle = new JLabel("ORIGEN");
+    private final JLabel sourceCardDescription = new JLabel();
+    private java.nio.file.Path selectedSourceFolder;
+    private JButton connectButton;
 
     ConnectionDialog(JFrame owner) {
-        super(owner, "Conectar bases", true); setLayout(new BorderLayout(10, 10)); JPanel form = new JPanel(new GridBagLayout()); form.setBorder(new EmptyBorder(16, 20, 10, 20));
+        super(owner, "Nueva comparación", true);
+        setLayout(new BorderLayout(10, 10));
         engine.addActionListener(e -> {
             String port = Integer.toString(((DatabaseEngine) engine.getSelectedItem()).defaultPort());
             for (int i = 0; i < 2; i++) { fields[i][1].setText(port); invalidateTest(i); }
         });
         engine.setPrototypeDisplayValue(DatabaseEngine.SQLSERVER);
         engine.setPreferredSize(new Dimension(195, engine.getPreferredSize().height));
-        engine.setToolTipText("Elegí el motor que usan las dos bases de esta comparación.");
-        GridBagConstraints engineConstraints = new GridBagConstraints(); engineConstraints.insets = new Insets(5, 6, 5, 6); engineConstraints.anchor = GridBagConstraints.WEST; engineConstraints.gridx = 0; engineConstraints.gridy = 0;
-        form.add(new JLabel("Motor de base de datos", UiIcons.themed(UiIcons.CONNECT, 16), JLabel.LEFT), engineConstraints); engineConstraints.gridx = 1; engineConstraints.gridwidth = 3; form.add(engine, engineConstraints);
-        GridBagConstraints separatorConstraints = new GridBagConstraints(); separatorConstraints.gridx = 0; separatorConstraints.gridy = 1; separatorConstraints.gridwidth = 4; separatorConstraints.fill = GridBagConstraints.HORIZONTAL; separatorConstraints.insets = new Insets(7, 6, 3, 6);
-        form.add(new JSeparator(SwingConstants.HORIZONTAL), separatorConstraints);
+        engine.setToolTipText("Motor de la base destino; ambos lados deben usar el mismo motor.");
         try { for (ConnectionProfile profile : ConnectionProfiles.load()) savedProfiles.put(profile.name(), profile); }
         catch (IOException ex) { JOptionPane.showMessageDialog(owner, "No se pudieron cargar los perfiles guardados: " + ex.getMessage(), "Perfiles no disponibles", JOptionPane.WARNING_MESSAGE); }
-        String[] labels = {"Servidor", "Puerto", "Usuario"}; String[] defaults = {"127.0.0.1", "3306", ""};
-        for (int side = 0; side < 2; side++) {
-            GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(5, 6, 5, 6); c.anchor = GridBagConstraints.WEST;
-            c.gridx = side * 2; c.gridy = 2; c.gridwidth = 2; JLabel header = new JLabel(side == 0 ? "BASE DE ORIGEN" : "BASE DE DESTINO"); header.setFont(new Font("Segoe UI", Font.BOLD, 11)); form.add(header, c);
-            c.gridy = 3; c.gridwidth = 1; c.weightx = 0; form.add(new JLabel("Perfil"), c);
-            c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
-            JComboBox<String> savedChoice = savedChoices.get(side); savedChoice.setPrototypeDisplayValue("Elegí un perfil guardado"); refreshSavedChoices(side, null);
-            JButton saveProfile = new JButton("Guardar"); JButton deleteProfile = new JButton("Eliminar");
-            JPanel profileControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0)); profileControls.add(saveProfile); profileControls.add(deleteProfile);
-            JPanel profileRow = new JPanel(new BorderLayout(4, 0)); profileRow.add(savedChoice, BorderLayout.CENTER); profileRow.add(profileControls, BorderLayout.EAST);
-            c.gridx = side * 2 + 1; c.gridwidth = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(profileRow, c);
-            for (int row = 0; row < labels.length; row++) {
-                c.gridy = row + 4; c.gridwidth = 1; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel(labels[row]), c);
-                c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; JTextField f = new JTextField(defaults[row], 15); fields[side][row] = f; form.add(f, c);
-            }
-            c.gridy = 7; c.gridx = side * 2; c.gridwidth = 1; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Base de datos"), c);
-            c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
-            JComboBox<String> database = databases.get(side); database.setEnabled(false); database.setPrototypeDisplayValue("Elegí una base de datos"); form.add(database, c);
-            c.gridy = 8; c.gridx = side * 2; c.weightx = 0; c.fill = GridBagConstraints.NONE; form.add(new JLabel("Contraseña"), c);
-            c.gridx = side * 2 + 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; passwords[side].setEchoChar('•'); form.add(passwords[side], c);
-            c.gridy = 9; c.gridx = side * 2; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; form.add(rememberPasswords[side], c);
-            c.gridy = 10; form.add(tls[side], c);
-            testButtons[side] = new JButton("Probar conexión"); testStatus[side] = new JLabel("Sin probar"); testStatus[side].setForeground(new Color(105, 118, 136));
-            JPanel testRow = new JPanel(new BorderLayout(8, 0)); testRow.add(testButtons[side], BorderLayout.WEST); testRow.add(testStatus[side], BorderLayout.CENTER);
-            c.gridy = 11; c.gridx = side * 2; c.gridwidth = 2; form.add(testRow, c);
-            final int endpointIndex = side; testButtons[side].addActionListener(e -> testConnection(endpointIndex));
-            savedChoice.addActionListener(e -> {
-                String name = (String) savedChoice.getSelectedItem();
-                if (!changingSavedChoice[endpointIndex] && name != null && !name.equals("Elegí un perfil guardado")) applyProfile(endpointIndex, savedProfiles.get(name));
-            });
-            databases.get(side).addActionListener(e -> { if (!updatingDatabaseChoice[endpointIndex]) finishAutomaticConnect(); });
-            saveProfile.addActionListener(e -> saveProfile(endpointIndex));
-            deleteProfile.addActionListener(e -> deleteProfile(endpointIndex));
-            observeChanges(side);
+        JPanel header = new JPanel(new GridBagLayout());
+        header.setBorder(new EmptyBorder(12, 16, 8, 16));
+        GridBagConstraints hc = new GridBagConstraints(); hc.insets = new Insets(4, 6, 4, 6); hc.anchor = GridBagConstraints.WEST;
+        hc.gridx = 0; hc.gridy = 0; header.add(new JLabel("Motor de base de datos"), hc);
+        hc.gridx = 1; header.add(engine, hc);
+        hc.gridx = 2; hc.insets = new Insets(4, 20, 4, 6); header.add(new JLabel("Tipo de origen"), hc);
+        hc.gridx = 3; hc.insets = new Insets(4, 6, 4, 6); sourceMode.setPrototypeDisplayValue(SourceMode.FLYWAY); header.add(sourceMode, hc);
+
+        originCards.add(buildDatabasePanel(0), "database");
+        originCards.add(buildFileSourcePanel(), "file");
+        JPanel destinationPanel = buildDatabasePanel(1);
+        JPanel endpoints = new JPanel(new GridLayout(1, 2, 12, 0));
+        endpoints.setBorder(new EmptyBorder(4, 16, 10, 16));
+        endpoints.add(originCards); endpoints.add(destinationPanel);
+        sourceMode.addActionListener(event -> updateSourceMode());
+
+        JLabel secure = new JLabel("Las contraseñas solo se guardan si activás la opción; se usa el almacén seguro del sistema operativo.");
+        secure.setBorder(new EmptyBorder(0, 20, 0, 20));
+        connectButton = actionButton("Conectar bases", true);
+        JButton cancel = new JButton("Cancelar");
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT)); buttons.add(cancel); buttons.add(connectButton);
+        cancel.addActionListener(e -> { autoConnectRequested = false; dispose(); });
+        connectButton.addActionListener(e -> requestConnect());
+        JPanel content = new JPanel(new BorderLayout()); content.add(header, BorderLayout.NORTH); content.add(endpoints, BorderLayout.CENTER);
+        add(content, BorderLayout.CENTER); add(secure, BorderLayout.NORTH); add(buttons, BorderLayout.SOUTH);
+        updateSourceMode(); setMinimumSize(new Dimension(850, 480)); pack(); setLocationRelativeTo(owner);
+    }
+
+    private JPanel buildDatabasePanel(int side) {
+        String[] labels = {"Servidor", "Puerto", "Usuario"};
+        String[] defaults = {"127.0.0.1", Integer.toString(((DatabaseEngine) engine.getSelectedItem()).defaultPort()), ""};
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(210, 218, 228)), new EmptyBorder(9, 10, 9, 10)));
+        GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(4, 4, 4, 4); c.anchor = GridBagConstraints.WEST;
+        c.gridx = 0; c.gridy = 0; c.gridwidth = 2; JLabel title = new JLabel(side == 0 ? "BASE DE ORIGEN" : "BASE DE DESTINO"); title.setFont(new Font("Segoe UI", Font.BOLD, 11)); panel.add(title, c);
+        c.gridy++; c.gridwidth = 1; c.weightx = 0; panel.add(new JLabel("Perfil"), c);
+        JComboBox<String> savedChoice = savedChoices.get(side); savedChoice.setPrototypeDisplayValue("Elegí un perfil guardado"); refreshSavedChoices(side, null);
+        JButton saveProfile = new JButton("Guardar"), deleteProfile = new JButton("Eliminar");
+        JPanel profileControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0)); profileControls.add(saveProfile); profileControls.add(deleteProfile);
+        JPanel profileRow = new JPanel(new BorderLayout(4, 0)); profileRow.add(savedChoice, BorderLayout.CENTER); profileRow.add(profileControls, BorderLayout.EAST);
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(profileRow, c);
+        for (int row = 0; row < labels.length; row++) {
+            c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel(labels[row]), c);
+            c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
+            JTextField field = new JTextField(defaults[row], 15); fields[side][row] = field; panel.add(field, c);
         }
-        JLabel secure = new JLabel("La contraseña solo se guarda si activás la opción; se usa el almacén seguro del sistema operativo."); secure.setBorder(new EmptyBorder(0, 20, 0, 20));
-        JButton cancel = new JButton("Cancelar"), connect = actionButton("Conectar", true); JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT)); buttons.add(cancel); buttons.add(connect);
-        cancel.addActionListener(e -> { autoConnectRequested = false; dispose(); }); connect.addActionListener(e -> requestConnect()); add(form, BorderLayout.CENTER); add(secure, BorderLayout.NORTH); add(buttons, BorderLayout.SOUTH); pack(); setLocationRelativeTo(owner);
+        c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel("Base de datos"), c);
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
+        JComboBox<String> database = databases.get(side); database.setEnabled(false); database.setPrototypeDisplayValue("Elegí una base de datos"); panel.add(database, c);
+        c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel("Contraseña"), c);
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; passwords[side].setEchoChar('•'); panel.add(passwords[side], c);
+        c.gridy++; c.gridx = 0; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(rememberPasswords[side], c);
+        c.gridy++; panel.add(tls[side], c);
+        testButtons[side] = new JButton("Probar conexión"); testStatus[side] = new JLabel("Sin probar"); testStatus[side].setForeground(new Color(105, 118, 136));
+        JPanel testRow = new JPanel(new BorderLayout(8, 0)); testRow.add(testButtons[side], BorderLayout.WEST); testRow.add(testStatus[side], BorderLayout.CENTER);
+        c.gridy++; panel.add(testRow, c);
+        final int endpointIndex = side;
+        testButtons[side].addActionListener(e -> testConnection(endpointIndex));
+        savedChoice.addActionListener(e -> {
+            String name = (String) savedChoice.getSelectedItem();
+            if (!changingSavedChoice[endpointIndex] && name != null && !name.equals("Elegí un perfil guardado")) applyProfile(endpointIndex, savedProfiles.get(name));
+        });
+        databases.get(side).addActionListener(e -> { if (!updatingDatabaseChoice[endpointIndex]) finishAutomaticConnect(); });
+        saveProfile.addActionListener(e -> saveProfile(endpointIndex)); deleteProfile.addActionListener(e -> deleteProfile(endpointIndex));
+        observeChanges(side);
+        return panel;
+    }
+
+    private JPanel buildFileSourcePanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(210, 218, 228)), new EmptyBorder(12, 12, 12, 12)));
+        GridBagConstraints c = new GridBagConstraints(); c.gridx = 0; c.gridy = 0; c.gridwidth = 2; c.anchor = GridBagConstraints.WEST; c.insets = new Insets(5, 4, 8, 4);
+        sourceCardTitle.setFont(new Font("Segoe UI", Font.BOLD, 11)); panel.add(sourceCardTitle, c);
+        c.gridy++; sourceCardDescription.setVerticalAlignment(SwingConstants.TOP); sourceCardDescription.setPreferredSize(new Dimension(360, 72)); panel.add(sourceCardDescription, c);
+        c.gridy++; c.gridwidth = 1; c.insets = new Insets(4, 4, 4, 4); panel.add(new JLabel("Carpeta"), c);
+        sourceFolderField.setEditable(false); sourceFolderField.setText("Seleccioná una carpeta…");
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(sourceFolderField, c);
+        JButton chooseFolder = new JButton("Examinar…"); c.gridy++; c.gridx = 1; c.weightx = 0; c.fill = GridBagConstraints.NONE; c.anchor = GridBagConstraints.EAST; panel.add(chooseFolder, c);
+        chooseFolder.addActionListener(event -> chooseSourceFolder());
+        return panel;
+    }
+
+    private void updateSourceMode() {
+        SourceMode mode = (SourceMode) sourceMode.getSelectedItem();
+        if (mode == null) return;
+        boolean databaseOrigin = mode == SourceMode.DATABASE;
+        ((CardLayout) originCards.getLayout()).show(originCards, databaseOrigin ? "database" : "file");
+        if (!databaseOrigin) {
+            invalidateTest(0);
+            passwords[0].setText("");
+            selectedSourceFolder = null; sourceFolderField.setText("Seleccioná una carpeta…");
+            sourceCardTitle.setText(mode == SourceMode.FLYWAY ? "ORIGEN · MIGRACIONES FLYWAY" : "ORIGEN · SNAPSHOT SQL");
+            sourceCardDescription.setText(mode == SourceMode.FLYWAY
+                    ? "<html><div style='width:350px'>Elegí la carpeta con migraciones versionadas. Se ejecutan en una base temporal del servidor destino; la base destino no se modifica directamente.</div></html>"
+                    : "<html><div style='width:350px'>Elegí una carpeta con definiciones CREATE completas, una por objeto. El SQL se lee para comparar; no se ejecuta.</div></html>");
+            testButtons[0].setEnabled(false);
+        } else {
+            testButtons[0].setEnabled(true);
+        }
+        connectButton.setText(databaseOrigin ? "Conectar bases" : "Conectar destino y cargar origen");
+        setTitle(databaseOrigin ? "Conectar bases" : "Conectar base destino");
+        revalidate(); pack(); setMinimumSize(new Dimension(850, 480));
+    }
+
+    private void chooseSourceFolder() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle(sourceMode.getSelectedItem() == SourceMode.FLYWAY
+                ? "Seleccionar carpeta de migraciones Flyway" : "Seleccionar carpeta de definiciones SQL");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY); chooser.setAcceptAllFileFilterUsed(false);
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        selectedSourceFolder = chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
+        sourceFolderField.setText(selectedSourceFolder.toString());
+        sourceFolderField.setToolTipText(selectedSourceFolder.toString());
     }
 
     private void refreshSavedChoices(int side, String selectedName) {
@@ -183,18 +270,20 @@ final class ConnectionDialog extends JDialog {
 
     private void requestConnect() {
         autoConnectRequested = true;
-        for (int side = 0; side < 2; side++) if (!testedSuccessfully[side] && testButtons[side].isEnabled()) testConnection(side);
+        int firstSide = sourceMode.getSelectedItem() == SourceMode.DATABASE ? 0 : 1;
+        for (int side = firstSide; side < 2; side++) if (!testedSuccessfully[side] && testButtons[side].isEnabled()) testConnection(side);
         finishAutomaticConnect();
     }
 
     private void finishAutomaticConnect() {
         if (!autoConnectRequested || !isDisplayable()) return;
-        for (JButton testButton : testButtons) if (!testButton.isEnabled()) return;
-        if (!testedSuccessfully[0] || !testedSuccessfully[1]) { autoConnectRequested = false; return; }
-        for (int side = 0; side < 2; side++) {
+        int firstSide = sourceMode.getSelectedItem() == SourceMode.DATABASE ? 0 : 1;
+        for (int side = firstSide; side < 2; side++) if (!testButtons[side].isEnabled()) return;
+        for (int side = firstSide; side < 2; side++) if (!testedSuccessfully[side]) { autoConnectRequested = false; return; }
+        for (int side = firstSide; side < 2; side++) {
             if (databases.get(side).getItemCount() == 0) { autoConnectRequested = false; return; }
             if (databases.get(side).getSelectedItem() == null) {
-        testStatus[side].setText("Elegí una base para continuar"); testStatus[side].setForeground(new Color(178, 112, 24)); return;
+                testStatus[side].setText("Elegí una base para continuar"); testStatus[side].setForeground(new Color(178, 112, 24)); return;
             }
         }
         autoConnectRequested = false; accept();
@@ -250,20 +339,29 @@ final class ConnectionDialog extends JDialog {
     }
 
     private void accept() {
-        Endpoint[] selectedEndpoints = new Endpoint[2];
+        Endpoint origin = null, destination = null;
         try {
             DatabaseEngine selectedEngine = (DatabaseEngine) engine.getSelectedItem();
-            for (int i = 0; i < 2; i++) {
+            SourceMode selectedMode = (SourceMode) sourceMode.getSelectedItem();
+            int firstSide = selectedMode == SourceMode.DATABASE ? 0 : 1;
+            for (int i = firstSide; i < 2; i++) {
                 String database = (String) databases.get(i).getSelectedItem();
-                if (database == null) throw new IllegalArgumentException("Probá la conexión y elegí una base de datos para ambos extremos");
+                if (database == null) throw new IllegalArgumentException(selectedMode == SourceMode.DATABASE
+                        ? "Probá la conexión y elegí una base para origen y destino"
+                        : "Probá la conexión y elegí una base de destino");
                 char[] typedPassword = passwords[i].getPassword();
-                try { selectedEndpoints[i] = new Endpoint(selectedEngine, fields[i][0].getText().trim(), Integer.parseInt(fields[i][1].getText().trim()), database, fields[i][2].getText().trim(), typedPassword, tls[i].isSelected()); }
+                Endpoint endpoint;
+                try { endpoint = new Endpoint(selectedEngine, fields[i][0].getText().trim(), Integer.parseInt(fields[i][1].getText().trim()), database, fields[i][2].getText().trim(), typedPassword, tls[i].isSelected()); }
                 finally { Arrays.fill(typedPassword, '\0'); }
+                if (i == 0) origin = endpoint; else destination = endpoint;
             }
-            endpoints = selectedEndpoints;
+            if (selectedMode != SourceMode.DATABASE && selectedSourceFolder == null)
+                throw new IllegalArgumentException("Seleccioná la carpeta del origen antes de continuar.");
+            selection = new Selection(selectedMode, origin, destination, selectedSourceFolder);
             dispose();
         } catch (RuntimeException ex) {
-            for (Endpoint endpoint : selectedEndpoints) if (endpoint != null) endpoint.clearPassword();
+            if (origin != null) origin.clearPassword();
+            if (destination != null) destination.clearPassword();
             JOptionPane.showMessageDialog(this, "Revisá los datos de conexión: " + ex.getMessage(), "Datos de conexión no válidos", JOptionPane.WARNING_MESSAGE);
         }
     }
