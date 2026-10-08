@@ -1,44 +1,46 @@
 # DB-Diff Studio
 
-DB-Diff Studio is a desktop tool for comparing MariaDB and MySQL schemas and exporting reviewed SQL. It connects to two endpoints, lets you choose tables, views, and routines, shows missing and changed objects, and exports SQL for selected targets. It never executes generated SQL.
 ![Java 21](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
 ![Maven](https://img.shields.io/badge/Maven-3.9+-C71A36?logo=apachemaven&logoColor=white)
-![MariaDB](https://img.shields.io/badge/MariaDB-supported-003545?logo=mariadb&logoColor=white)
-![MySQL](https://img.shields.io/badge/MySQL-supported-4479A1?logo=mysql&logoColor=white)
+![MariaDB](https://img.shields.io/badge/MariaDB-compatible-003545?logo=mariadb&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-compatible-4479A1?logo=mysql&logoColor=white)
+
+DB-Diff Studio es una aplicación de escritorio para comparar esquemas de MariaDB y MySQL y exportar SQL para revisar. Se conecta a dos bases, permite elegir tablas, vistas y rutinas, muestra objetos faltantes o modificados y genera SQL para los elementos seleccionados. La aplicación nunca ejecuta el SQL generado.
+
 ## Índice
 
-- [Requirements](#requirements)
-- [Run](#run)
-- [Current scope](#current-scope)
-- [Design](#design)
+- [Requisitos](#requisitos)
+- [Ejecución](#ejecución)
+- [Alcance actual](#alcance-actual)
+- [Diseño](#diseño)
 
-## Requirements
+## Requisitos
 
-- JDK 21 or later
-- Apache Maven 3.9 or later
-- Network access on the first build so Maven can download dependencies (they are cached locally afterward)
-- Two reachable instances of the selected database engine for a comparison
+- JDK 21 o posterior
+- Apache Maven 3.9 o posterior
+- Acceso a internet en la primera compilación para que Maven descargue las dependencias; después quedan guardadas en la caché local
+- Dos instancias accesibles del motor seleccionado para realizar una comparación
 
-## Run
+## Ejecución
 
-On Windows, run `run.bat`. It builds the executable JAR and opens the desktop app in a separate window. The terminal returns to the prompt while the app stays open. On macOS or Linux, run `./run.sh`; the script builds and launches the app. To build without launching, run `mvn package`; the app is written to `target/db-diff-studio-0.2.0.jar`, with JDBC drivers in `target/lib`. Maven downloads the drivers and their dependencies into its local cache. Credentials are never saved there.
+En Windows, ejecutá `run.bat`. El script compila el JAR ejecutable y abre la aplicación en una ventana independiente. La terminal vuelve a mostrar el prompt mientras la aplicación queda abierta. En macOS o Linux, ejecutá `./run.sh`; el script compila y abre la aplicación. Para compilar sin abrirla, ejecutá `mvn package`: la aplicación queda en `target/db-diff-studio-0.2.0.jar`, con los controladores JDBC en `target/lib`. Maven descarga los controladores y sus dependencias a la caché local. Las credenciales no se guardan allí.
 
-The connection dialog accepts a database engine and connection details for each endpoint. Use **Test connection** to verify a server and load the databases visible to that account, then choose a database from the list. Both endpoints use the selected engine in this version. Saved profiles can be selected independently for source and target; they store the engine, host, port, database, username, and TLS option in `~/.db-diff-studio/connections.properties`. Passwords are never stored and must be entered for each session. TLS can be enabled per connection.
+En la ventana de conexión, elegí el motor y completá los datos de cada extremo. Al pulsar **Probar conexión**, se verifica el servidor y se cargan las bases visibles para esa cuenta; después elegí una base de la lista. En esta versión, ambos extremos usan el mismo motor. Los perfiles guardados se pueden elegir por separado para el origen y el destino. Guardan el motor, servidor, puerto, base, usuario y configuración TLS en `~/.db-diff-studio/connections.properties`. Las contraseñas nunca se guardan; hay que ingresarlas en cada sesión. TLS se puede habilitar por conexión.
 
-After connecting, the object list is marked **not compared** until analysis runs. Use Ctrl-click or Shift-click to select individual objects. Compare analyzes the selected objects; with no selection, it analyzes every object in the enabled kinds. Select one compared table to compare its rows. Export SQL applies only to selected comparison results; with no selection, it asks you to select results rather than exporting everything.
+Al conectar, la lista de objetos queda marcada como **sin comparar** hasta que se ejecute el análisis. Usá Ctrl+clic o Mayús+clic para seleccionar objetos. **Comparar** analiza los objetos seleccionados; si no seleccionás ninguno, analiza todos los tipos habilitados. Para comparar filas, seleccioná una tabla que ya se haya comparado. **Exportar SQL** solo incluye los resultados seleccionados; si no seleccionaste ninguno, la aplicación te pide que elijas en vez de exportarlo todo.
 
-## Current scope
+## Alcance actual
 
-- MariaDB and MySQL endpoint connections through JDBC. MySQL uses the official Connector/J driver and targets MySQL Server 8.0 or later.
-- Listing and selection of tables, views, procedures, and functions.
-- Table column and index metadata comparison; view and routine definition comparison.
-- Selected-table row comparison using primary keys. Rows are classified as source-only, target-only, or different; INSERT and UPDATE exports are available, with DELETE opt-in.
-- Readable line-by-line definition differences and missing-object status.
-- `SHOW CREATE` based DDL for tables, views, procedures, and functions when the server grants access. Source-only tables/views export CREATE; changed views export CREATE OR REPLACE; changed routines export reviewed DROP + CREATE scripts. Every export selects the configured target database and is never executed.
-- Changed table definitions remain review-only: the app exports the complete source CREATE TABLE for inspection but does not guess an ALTER migration.
+- Conexiones JDBC a MariaDB y MySQL. MySQL usa el controlador oficial Connector/J y es compatible con MySQL Server 8.0 o posterior.
+- Listado y selección de tablas, vistas, procedimientos y funciones.
+- Comparación de columnas e índices de tablas; comparación de definiciones de vistas y rutinas.
+- Comparación de filas de tablas seleccionadas mediante claves primarias. Las filas se clasifican como exclusivas del origen, exclusivas del destino o diferentes. Se puede exportar `INSERT` y `UPDATE`; `DELETE` requiere habilitarse explícitamente.
+- Diferencias de definiciones línea por línea y estado de objetos faltantes.
+- DDL basado en `SHOW CREATE` para tablas, vistas, procedimientos y funciones, si la cuenta tiene permisos. Las tablas y vistas que solo existen en el origen se exportan con `CREATE`; las vistas modificadas, con `CREATE OR REPLACE`; las rutinas modificadas, con scripts revisables de `DROP` y `CREATE`. Cada exportación selecciona la base de destino y la aplicación nunca la ejecuta.
+- Los cambios en definiciones de tablas quedan para revisión: la aplicación exporta el `CREATE TABLE` completo del origen, pero no intenta generar una migración `ALTER`.
 
-SQL Server and other engines can be added behind the `DatabaseConnector` interface. MySQL and MariaDB are compared only within the same engine; cross-engine comparisons are not supported yet. Server permissions or versions may prevent `SHOW CREATE`; in that case the app displays the error and exports a review-only note instead of incomplete DDL. Routine SQL exports use the MySQL-family client `DELIMITER` directive and should be reviewed in a compatible SQL client. Row comparison skips tables without primary keys, tables whose full column signatures differ (including `COLUMN_TYPE`, character set, collation, nullability, and datetime precision), and types that cannot be safely ordered or compared. It streams rows in primary-key order with server-side cursor fetches and retains at most 10,000 changed rows per comparison; exports indicate when that cap was reached and contain only retained rows. Supported row types include common numeric, text, date/time, enum, and set values; binary, JSON, spatial, and other unsupported types are skipped. Row SQL is qualified with the target database and is never executed by the app.
+Se pueden agregar SQL Server y otros motores mediante la interfaz `DatabaseConnector`. Por ahora, las comparaciones entre MySQL y MariaDB solo se admiten dentro del mismo motor; no se admiten comparaciones entre motores distintos. Los permisos o la versión del servidor pueden impedir `SHOW CREATE`; en ese caso, la aplicación muestra el error y exporta una nota para revisión, en vez de un DDL incompleto. Las exportaciones de rutinas usan la directiva `DELIMITER` del cliente de la familia MySQL y deben revisarse con un cliente SQL compatible. La comparación de filas omite tablas sin clave primaria, tablas cuyas firmas de columnas no coinciden (incluye `COLUMN_TYPE`, juego de caracteres, intercalación, nulabilidad y precisión de fecha y hora) y tipos que no se pueden ordenar o comparar de forma segura. Lee las filas en orden de clave primaria con cursores del servidor y conserva como máximo 10.000 filas modificadas por comparación; la exportación indica si se alcanzó ese límite e incluye solo las filas conservadas. Se admiten tipos numéricos, texto, fecha y hora, `ENUM` y `SET` habituales. Se omiten tipos binarios, JSON, espaciales y otros tipos no compatibles. El SQL de filas califica cada objeto con la base de destino y la aplicación nunca lo ejecuta.
 
-## Design
+## Diseño
 
-The app uses Java 21 and Swing. Maven manages the JDBC dependencies and prepares an executable JAR with its runtime libraries in `target/lib`. JDBC access and object extraction live behind `DatabaseConnector`; `MariaDbConnector` and `MySqlConnector` share a MySQL-family implementation. The UI runs database work off the event thread and owns the short-lived password arrays used for login.
+La aplicación usa Java 21 y Swing. Maven administra las dependencias JDBC y prepara un JAR ejecutable con sus bibliotecas en `target/lib`. El acceso JDBC y la extracción de objetos se implementan detrás de `DatabaseConnector`; `MariaDbConnector` y `MySqlConnector` comparten una implementación para la familia MySQL. La interfaz ejecuta las operaciones de base de datos fuera del hilo de eventos y administra las contraseñas temporales usadas para iniciar sesión.
