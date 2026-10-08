@@ -69,8 +69,8 @@ public final class ComparisonView extends JPanel {
         if (current != null) showResult(current, dark);
     }
 
-    public void setCodeFontSize(int size) {
-        for (DiffCodeEditor editor : List.of(source, target, unified)) editor.setFontSize(size);
+    public void setCodeFont(String family, int size) {
+        for (DiffCodeEditor editor : List.of(source, target, unified)) editor.setCodeFont(family, size);
     }
 
     public void showMessage(String text) {

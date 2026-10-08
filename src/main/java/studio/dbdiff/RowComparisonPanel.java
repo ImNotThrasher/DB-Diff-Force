@@ -89,7 +89,7 @@ final class RowComparisonPanel extends JPanel {
                 exportHandler.accept(result, new ExportOptions(inserts.isSelected(), updates.isSelected(), deletes.isSelected()));
             } catch (RuntimeException ex) {
                 javax.swing.JOptionPane.showMessageDialog(this,
-                        "No se pudo preparar la exportación: " + errorMessage(ex), "Error al exportar filas",
+                        "No se pudo preparar la exportación: " + AppUtils.errorMessage(ex), "Error al exportar filas",
                         javax.swing.JOptionPane.ERROR_MESSAGE);
             }
         });
@@ -353,8 +353,6 @@ final class RowComparisonPanel extends JPanel {
         String text = value.toString();
         return text.length() > 512 ? text.substring(0, 509) + "…" : text;
     }
-
-    private static String errorMessage(Exception ex) { return ex.getMessage() == null ? ex.toString() : ex.getMessage(); }
 
     private static final class FieldCellRenderer extends javax.swing.JTextArea implements javax.swing.table.TableCellRenderer {
         private final boolean dark;

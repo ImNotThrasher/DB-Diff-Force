@@ -10,11 +10,14 @@ import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.util.List;
+import javax.imageio.ImageIO;
 
 /** Scalable application mark used in the header and native window chrome. */
 final class BrandMark implements Icon {
     private static final int VIEW_SIZE = 64;
+    private static final BufferedImage LOGO = loadLogo();
     private final int size;
 
     private BrandMark(int size) { this.size = size; }
@@ -44,6 +47,43 @@ final class BrandMark implements Icon {
     }
 
     private static void paintMark(Graphics2D graphics, int width, int height) {
+        if (LOGO != null) {
+            double scale = Math.min(width / (double) LOGO.getWidth(), height / (double) LOGO.getHeight());
+            int drawWidth = (int) Math.round(LOGO.getWidth() * scale);
+            int drawHeight = (int) Math.round(LOGO.getHeight() * scale);
+            int x = (width - drawWidth) / 2;
+            int y = (height - drawHeight) / 2;
+            graphics.drawImage(LOGO, x, y, drawWidth, drawHeight, null);
+            return;
+        }
+        paintFallback(graphics, width, height);
+    }
+
+    /** Load the transparent brand asset and crop its unused transparent border. */
+    private static BufferedImage loadLogo() {
+        try (var input = BrandMark.class.getResourceAsStream("/studio/dbdiff/brand-mark.png")) {
+            if (input == null) return null;
+            BufferedImage source = ImageIO.read(input);
+            if (source == null) return null;
+            int left = source.getWidth(), top = source.getHeight(), right = -1, bottom = -1;
+            for (int y = 0; y < source.getHeight(); y++) for (int x = 0; x < source.getWidth(); x++) {
+                if ((source.getRGB(x, y) >>> 24) == 0) continue;
+                left = Math.min(left, x); top = Math.min(top, y);
+                right = Math.max(right, x); bottom = Math.max(bottom, y);
+            }
+            if (right < left || bottom < top) return source;
+            BufferedImage cropped = new BufferedImage(right - left + 1, bottom - top + 1, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = cropped.createGraphics();
+            graphics.drawImage(source, 0, 0, cropped.getWidth(), cropped.getHeight(),
+                    left, top, right + 1, bottom + 1, null);
+            graphics.dispose();
+            return cropped;
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private static void paintFallback(Graphics2D graphics, int width, int height) {
         Graphics2D g = (Graphics2D) graphics.create();
         g.scale(width / (double) VIEW_SIZE, height / (double) VIEW_SIZE);
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
