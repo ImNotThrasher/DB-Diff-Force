@@ -91,12 +91,17 @@ public final class Main {
     private final JProgressBar activityIndicator = new JProgressBar();
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
     private SchemaSource source;
+    /** Keeps the initially connected database available while a file-based source is active. */
+    private DatabaseConnector databaseSource;
     private DatabaseConnector target;
     /** Ephemeral origin credentials used only when the user requests Flyway reconstruction. */
     private Endpoint flywayEndpoint;
     private DatabaseEngine schemaEngine = DatabaseEngine.MARIADB;
     private String sourceDatabase = "", targetDatabase = "";
     private List<SchemaObject> sourceObjects = List.of(), targetObjects = List.of();
+    private String databaseSourceName = "";
+    private List<SchemaObject> databaseSourceObjects = List.of();
+    private DependencyReport databaseSourceDependencyReport = new DependencyReport(Map.of(), List.of(), List.of());
     private Map<SchemaObject.Key, Set<SchemaObject.Key>> sourceDependencies = Map.of(), targetDependencies = Map.of();
     private DependencyReport sourceDependencyReport = new DependencyReport(Map.of(), List.of(), List.of());
     private DependencyReport targetDependencyReport = new DependencyReport(Map.of(), List.of(), List.of());
@@ -107,10 +112,16 @@ public final class Main {
     private int codeFontSize = 13;
     private String codeFontFamily = "";
     private JPanel headerPanel, leftPanel;
+    private JPanel modeBarPanel;
+    private JLabel modeTitle;
     private JSplitPane workspaceSplit;
     private JSplitPane comparisonSplit;
     private JButton layoutButton;
-    private JButton compareButton, exportButton, snapshotButton, flywayButton;
+    private JButton compareButton, exportButton, chooseSourceButton;
+    private JComboBox<ComparisonMode> modeSelector;
+    private JLabel modeDescription;
+    private ComparisonMode comparisonMode = ComparisonMode.DATABASES;
+    private boolean updatingModeSelector;
     private final Set<SchemaObject.Key> comparedKeys = new TreeSet<>();
     private final Set<SchemaObject.Key> loadedSourceKeys = ConcurrentHashMap.newKeySet();
     private final Set<SchemaObject.Key> loadedTargetKeys = ConcurrentHashMap.newKeySet();
@@ -153,13 +164,51 @@ public final class Main {
         brand.add(logo, BorderLayout.WEST); brand.add(brandText, BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4)); actions.setOpaque(false);
         JButton connect = button("Conectar bases", true); connect.setIcon(UiIcons.themed(UiIcons.CONNECT, 16)); connect.setIconTextGap(7); connect.putClientProperty("dbdiff.primary", Boolean.TRUE); connect.addActionListener(e -> connect());
-        snapshotButton = button("Comparar snapshot", false); snapshotButton.setIcon(UiIcons.themed(UiIcons.SNAPSHOT, 16)); snapshotButton.setIconTextGap(6); snapshotButton.setToolTipText("Usar definiciones SQL completas de una carpeta como origen"); snapshotButton.addActionListener(e -> openSnapshot());
-        flywayButton = button("Reconstruir Flyway", false); flywayButton.setIcon(UiIcons.themed(UiIcons.SNAPSHOT, 16)); flywayButton.setIconTextGap(6); flywayButton.setToolTipText("Ejecutar migraciones en una base temporal y comparar su esquema"); flywayButton.addActionListener(e -> openFlyway());
         compareButton = button("Comparar", false); compareButton.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compareButton.setIconTextGap(7); compareButton.addActionListener(e -> compare());
         exportButton = button("Exportar SQL", false); exportButton.setIcon(UiIcons.themed(UiIcons.EXPORT, 16)); exportButton.setIconTextGap(7); exportButton.addActionListener(e -> export());
         JButton settings = button("Configuración", false); settings.setIcon(UiIcons.themed(UiIcons.SETTINGS, 16)); settings.setIconTextGap(6);
         settings.setToolTipText("Tema y fuente del comparador"); settings.addActionListener(e -> showSettings());
-        actions.add(connect); actions.add(snapshotButton); actions.add(flywayButton); actions.add(compareButton); actions.add(exportButton); actions.add(settings); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
+        actions.add(connect); actions.add(compareButton); actions.add(exportButton); actions.add(settings); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
+    }
+
+    /** Gives database, SQL snapshot, and Flyway comparisons separate, explicit workflows. */
+    private JComponent modeBar() {
+        JPanel bar = new JPanel(new BorderLayout(12, 0));
+        modeBarPanel = bar;
+        bar.setBorder(new EmptyBorder(9, 18, 9, 18));
+        bar.setBackground(new Color(237, 241, 246));
+        modeTitle = new JLabel("MODO");
+        modeTitle.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        modeSelector = new JComboBox<>(ComparisonMode.values());
+        modeSelector.setSelectedItem(comparisonMode);
+        modeSelector.setToolTipText("Elegí qué tipo de origen comparar con la base destino.");
+        modeSelector.addActionListener(event -> {
+            if (updatingModeSelector) return;
+            ComparisonMode selected = (ComparisonMode) modeSelector.getSelectedItem();
+            if (selected == null || selected == comparisonMode) return;
+            switch (selected) {
+                case DATABASES -> activateDatabaseMode();
+                case SNAPSHOT -> openSnapshot();
+                case FLYWAY -> openFlyway();
+            }
+        });
+        chooseSourceButton = button("Elegir carpeta…", false);
+        chooseSourceButton.addActionListener(event -> {
+            if (comparisonMode == ComparisonMode.SNAPSHOT) openSnapshot();
+            else if (comparisonMode == ComparisonMode.FLYWAY) openFlyway();
+        });
+        modeDescription = new JLabel(comparisonMode.description);
+        modeDescription.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        modeDescription.setForeground(new Color(88, 101, 120));
+        JPanel selection = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        selection.setOpaque(false);
+        selection.add(modeTitle);
+        selection.add(modeSelector);
+        selection.add(chooseSourceButton);
+        bar.add(selection, BorderLayout.WEST);
+        bar.add(modeDescription, BorderLayout.CENTER);
+        updateModeBar();
+        return bar;
     }
 
     private JComponent content() {
@@ -198,7 +247,10 @@ public final class Main {
         right.add(comparisonSplit, BorderLayout.CENTER);
         workspaceSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right); workspaceSplit.setResizeWeight(.29); workspaceSplit.setDividerLocation(360); workspaceSplit.setBorder(null); split.add(workspaceSplit, BorderLayout.CENTER);
         updateLayout();
-        return split;
+        JPanel content = new JPanel(new BorderLayout(0, 0));
+        content.add(modeBar(), BorderLayout.NORTH);
+        content.add(split, BorderLayout.CENTER);
+        return content;
     }
 
     private JComponent statusBar() {
@@ -248,7 +300,25 @@ public final class Main {
                 List<SchemaObject> ao = a.listObjects(), bo = b.listObjects();
                 DependencyReport ad = safeDependencyReport(a), bd = safeDependencyReport(b);
                 Endpoint originForFlyway = copyEndpoint(endpoints[0]);
-                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; flywayEndpoint = originForFlyway; sourceDependencyReport = ad; targetDependencyReport = bd; sourceDependencies = ad.dependencies(); targetDependencies = bd.dependencies(); schemaEngine = endpoints[0].engine(); setConnectionAvailable(true); sourceDatabase = endpoints[0].database(); targetDatabase = endpoints[1].database(); comparisonView.setDatabases(sourceDatabase, targetDatabase); sourceObjects = ao; targetObjects = bo; loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null; compared = false; comparedKeys.clear(); showCatalog(); refreshDependencyStatus(); setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos · dependencias catalogadas " + ad.edgeCount() + " / " + bd.edgeCount() + " · seleccioná un objeto para cargar su definición"); });
+                SwingUtilities.invokeLater(() -> {
+                    closeConnectors();
+                    source = databaseSource = a;
+                    target = b;
+                    flywayEndpoint = originForFlyway;
+                    sourceDependencyReport = databaseSourceDependencyReport = ad;
+                    targetDependencyReport = bd;
+                    sourceDependencies = ad.dependencies(); targetDependencies = bd.dependencies();
+                    schemaEngine = endpoints[0].engine();
+                    sourceDatabase = databaseSourceName = endpoints[0].database();
+                    targetDatabase = endpoints[1].database();
+                    databaseSourceObjects = ao;
+                    sourceObjects = ao; targetObjects = bo;
+                    comparisonView.setDatabases(sourceDatabase, targetDatabase);
+                    loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
+                    compared = false; comparedKeys.clear(); setComparisonMode(ComparisonMode.DATABASES);
+                    showCatalog(); setConnectionAvailable(true); refreshDependencyStatus();
+                    setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos · dependencias catalogadas " + ad.edgeCount() + " / " + bd.edgeCount() + " · seleccioná un objeto para cargar su definición");
+                });
             } catch (SQLException | RuntimeException ex) { a.close(); b.close(); SwingUtilities.invokeLater(() -> { setBusy(false, "Error de conexión"); error("No se pudo conectar", ex); }); }
             finally { endpoints[0].clearPassword(); endpoints[1].clearPassword(); }
         });
@@ -266,25 +336,27 @@ public final class Main {
         if (target == null || flywayEndpoint == null) {
             JOptionPane.showMessageDialog(frame, "Conectá las bases primero para usar el servidor de origen como entorno temporal.",
                     "Falta la conexión de origen", JOptionPane.INFORMATION_MESSAGE);
+            syncModeSelector();
             return;
         }
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Seleccionar carpeta de migraciones Flyway (V1__..., V2__...)");
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         chooser.setAcceptAllFileFilterUsed(false);
-        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) { syncModeSelector(); return; }
         Path folder = chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
         Endpoint origin = copyEndpoint(flywayEndpoint);
         String message = "Se va a crear una base temporal con nombre único en el servidor de origen "
                 + origin.host() + ":" + origin.port() + " (" + origin.engine() + ").\n\n"
                 + "Flyway ejecutará las migraciones de:\n" + folder + "\n\n"
                 + "La aplicación leerá el esquema resultante en memoria y borrará la base temporal antes de mostrar la comparación. "
-                + "No aplicará cambios directamente en las bases de Origen (" + sourceDatabase + ") ni Destino (" + targetDatabase + ").\n\n"
+                + "No aplicará cambios directamente en las bases conectadas (" + databaseSourceName + " y " + targetDatabase
+                + "); Flyway sí ejecutará las migraciones en la base temporal.\n\n"
                 + "Necesitás permisos para crear y borrar bases de datos. Revisá las migraciones: SQL que haga referencia explícita a otras bases o servidores podría modificarlos.\n\n"
                 + "¿Autorizar la creación de la base temporal y ejecutar Flyway?";
         int answer = JOptionPane.showConfirmDialog(frame, message, "Reconstruir esquema desde Flyway",
                 JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-        if (answer != JOptionPane.YES_OPTION) { origin.clearPassword(); return; }
+        if (answer != JOptionPane.YES_OPTION) { origin.clearPassword(); syncModeSelector(); return; }
 
         long request = ++comparisonRequest;
         selectionRequest++; rowComparisonRequest++;
@@ -304,6 +376,7 @@ public final class Main {
                     comparisonView.setDatabases(sourceDatabase, targetDatabase);
                     loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
                     compared = false; comparedKeys.clear(); rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
+                    setComparisonMode(ComparisonMode.FLYWAY);
                     showCatalog(); setConnectionAvailable(true); refreshDependencyStatus();
                     setBusy(false, "Flyway reconstruido · " + reconstructed.migrationsExecuted() + " migraciones · " + catalog.size()
                             + " objetos · base temporal eliminada; seleccioná un objeto o Comparar");
@@ -311,6 +384,7 @@ public final class Main {
             } catch (SQLException | RuntimeException ex) {
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) return;
+                    syncModeSelector();
                     setBusy(false, "No se pudo reconstruir Flyway"); error("Error al reconstruir las migraciones", ex);
                 });
             } finally { origin.clearPassword(); }
@@ -323,20 +397,24 @@ public final class Main {
         finally { Arrays.fill(password, '\0'); }
     }
 
-    private void closeCurrentSource() { if (source != null) source.close(); source = null; }
+    private void closeCurrentSource() {
+        if (source != null && source != databaseSource) source.close();
+        source = null;
+    }
 
-    /** Replaces the source database with a read-only folder of complete SQL definitions. */
+    /** Loads a read-only folder of complete SQL definitions as the active comparison source. */
     private void openSnapshot() {
         if (target == null) {
             JOptionPane.showMessageDialog(frame, "Conectá las bases primero; el destino debe ser una base de datos.",
                     "Falta la base destino", JOptionPane.INFORMATION_MESSAGE);
+            syncModeSelector();
             return;
         }
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Seleccionar carpeta de snapshot SQL");
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         chooser.setAcceptAllFileFilterUsed(false);
-        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) { syncModeSelector(); return; }
         Path folder = chooser.getSelectedFile().toPath();
         long request = ++comparisonRequest;
         selectionRequest++; rowComparisonRequest++;
@@ -347,7 +425,7 @@ public final class Main {
                 List<SchemaObject> catalog = snapshot.listObjects();
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) { snapshot.close(); return; }
-                    if (source != null) source.close();
+                    closeCurrentSource();
                     source = snapshot;
                     sourceDependencyReport = DependencyReport.unknown(Map.of(), "El snapshot SQL no aporta un catálogo confiable de dependencias.");
                     sourceDependencies = sourceDependencyReport.dependencies(); sourceObjects = catalog;
@@ -355,6 +433,7 @@ public final class Main {
                     comparisonView.setDatabases(sourceDatabase, targetDatabase);
                     loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
                     compared = false; comparedKeys.clear(); rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
+                    setComparisonMode(ComparisonMode.SNAPSHOT);
                     showCatalog(); setConnectionAvailable(true);
                     refreshDependencyStatus();
                     setBusy(false, "Snapshot cargado · " + catalog.size() + " definiciones · dependencias catalogadas " + targetDependencyReport.edgeCount() + " en destino");
@@ -363,10 +442,56 @@ public final class Main {
                 snapshot.close();
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) return;
+                    syncModeSelector();
                     setBusy(false, "No se pudo leer el snapshot"); error("Error al cargar la carpeta SQL", ex);
                 });
             }
         });
+    }
+
+    /** Restores the original database as the active source without reconnecting. */
+    private void activateDatabaseMode() {
+        if (databaseSource == null || target == null) {
+            syncModeSelector();
+            JOptionPane.showMessageDialog(frame, "Conectá las dos bases para usar este modo.", "Bases sin conexión", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        comparisonRequest++; selectionRequest++; rowComparisonRequest++;
+        schemaComparisonRunning = false;
+        closeCurrentSource();
+        source = databaseSource;
+        sourceDatabase = databaseSourceName;
+        sourceObjects = databaseSourceObjects;
+        sourceDependencyReport = databaseSourceDependencyReport;
+        sourceDependencies = sourceDependencyReport.dependencies();
+        loadedSourceKeys.clear();
+        selectedSchemaResult = null; compared = false; comparedKeys.clear();
+        rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
+        comparisonView.setDatabases(sourceDatabase, targetDatabase);
+        setComparisonMode(ComparisonMode.DATABASES);
+        showCatalog(); setConnectionAvailable(true); refreshDependencyStatus();
+        setBusy(false, "Modo Bases de datos · " + sourceDatabase + " → " + targetDatabase + " · seleccioná objetos y apretá Comparar");
+    }
+
+    private void setComparisonMode(ComparisonMode mode) {
+        comparisonMode = mode;
+        syncModeSelector();
+        if (modeDescription != null) modeDescription.setText(mode.description);
+        if (chooseSourceButton != null) chooseSourceButton.setVisible(mode != ComparisonMode.DATABASES);
+        if (chooseSourceButton != null) chooseSourceButton.setText(mode == ComparisonMode.FLYWAY ? "Elegir migraciones…" : "Elegir carpeta…");
+    }
+
+    private void updateModeBar() {
+        setComparisonMode(comparisonMode);
+        if (modeSelector != null) modeSelector.setEnabled(source != null && target != null);
+        if (chooseSourceButton != null) chooseSourceButton.setEnabled(source != null && target != null);
+    }
+
+    private void syncModeSelector() {
+        if (modeSelector == null) return;
+        updatingModeSelector = true;
+        modeSelector.setSelectedItem(comparisonMode);
+        updatingModeSelector = false;
     }
 
     private void compare() {
@@ -980,8 +1105,8 @@ public final class Main {
         if (workspaceSplit != null) setEnabledRecursively(workspaceSplit.getRightComponent(), available);
         if (compareButton != null) compareButton.setEnabled(available);
         if (exportButton != null) exportButton.setEnabled(available);
-        if (snapshotButton != null) snapshotButton.setEnabled(available);
-        if (flywayButton != null) flywayButton.setEnabled(available && flywayEndpoint != null);
+        if (modeSelector != null) modeSelector.setEnabled(available);
+        if (chooseSourceButton != null) chooseSourceButton.setEnabled(available && comparisonMode != ComparisonMode.DATABASES);
         if (rowComparisonPanel != null) setEnabledRecursively(rowComparisonPanel, available && source instanceof DatabaseConnector);
     }
 
@@ -1012,8 +1137,11 @@ public final class Main {
         connectionStatus.setToolTipText(String.join("\n", notes));
     }
     private void closeConnectors() {
-        if (source != null) source.close(); if (target != null) target.close();
-        source = target = null; sourceDependencies = targetDependencies = Map.of();
+        if (source != null) source.close();
+        if (databaseSource != null && databaseSource != source) databaseSource.close();
+        if (target != null) target.close();
+        source = databaseSource = target = null; sourceDependencies = targetDependencies = Map.of();
+        databaseSourceObjects = List.of(); databaseSourceName = "";
         if (flywayEndpoint != null) flywayEndpoint.clearPassword(); flywayEndpoint = null;
         sourceDependencyReport = new DependencyReport(Map.of(), List.of(), List.of());
         targetDependencyReport = new DependencyReport(Map.of(), List.of(), List.of());
@@ -1066,6 +1194,13 @@ public final class Main {
         ThemePalette palette = ThemePalette.forMode(dark);
         activityIndicator.setForeground(dark ? new Color(93, 160, 245) : new Color(49, 112, 199));
         activityIndicator.setBackground(palette.panel());
+        if (modeBarPanel != null) {
+            modeBarPanel.setBackground(dark ? palette.panel() : new Color(237, 241, 246));
+            modeTitle.setForeground(palette.foreground());
+            modeDescription.setForeground(palette.foreground());
+            modeBarPanel.repaint();
+        }
+        updateModeBar();
         if (comparisonSplit != null) comparisonSplit.setBackground(palette.border());
         objectSearchBox.setBackground(palette.panel());
         objectSearchBox.setBorder(BorderFactory.createCompoundBorder(
@@ -1218,6 +1353,18 @@ public final class Main {
 
     private static String kindName(SchemaObject.Kind kind) {
         return switch (kind) { case TABLE -> "tabla"; case VIEW -> "vista"; case PROCEDURE -> "procedimiento"; case FUNCTION -> "función"; case TRIGGER -> "trigger"; };
+    }
+
+    private enum ComparisonMode {
+        DATABASES("Bases de datos", "Compara las dos bases conectadas."),
+        SNAPSHOT("Snapshot SQL → base", "Compara definiciones CREATE completas de una carpeta con la base destino; no ejecuta el SQL."),
+        FLYWAY("Flyway → base", "Compara el esquema reconstruido en memoria con la base destino; no vuelve a conectarse al origen.");
+
+        private final String label;
+        private final String description;
+
+        ComparisonMode(String label, String description) { this.label = label; this.description = description; }
+        @Override public String toString() { return label; }
     }
 
 }
