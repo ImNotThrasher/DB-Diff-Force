@@ -1,6 +1,7 @@
 package studio.dbdiff;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.output.MigrateResult;
 
 import java.nio.file.Files;
@@ -12,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -36,8 +38,7 @@ final class FlywayReconstructionSource implements SchemaSource {
 
     static FlywayReconstructionSource build(Path migrationFolder, Endpoint origin) throws SQLException {
         Path folder = migrationFolder.toAbsolutePath().normalize();
-        if (!Files.isDirectory(folder)) throw new SQLException("La ruta seleccionada no es una carpeta válida.");
-        if (sqlFileCount(folder) == 0) throw new SQLException("La carpeta no contiene archivos .sql para Flyway.");
+        validateMigrationFolder(folder);
 
         String temporaryDatabase = "dbdf_tmp_" + java.util.UUID.randomUUID().toString().replace("-", "");
         boolean created = false;
@@ -124,13 +125,33 @@ final class FlywayReconstructionSource implements SchemaSource {
     @Override public Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies() { return dependencies.dependencies(); }
     @Override public DependencyReport dependencyReport() { return dependencies; }
 
-    private static long sqlFileCount(Path folder) throws SQLException {
+    /** Fail before creating the scratch database if a broad project folder includes duplicate builds. */
+    static void validateMigrationFolder(Path folder) throws SQLException {
+        if (!Files.isDirectory(folder)) throw new SQLException("La ruta seleccionada no es una carpeta válida.");
+        List<Path> scripts;
         try (var paths = Files.walk(folder)) {
-            return paths.filter(Files::isRegularFile)
+            scripts = paths.filter(Files::isRegularFile)
                     .filter(file -> file.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".sql"))
-                    .count();
+                    .toList();
         } catch (java.io.IOException ex) {
             throw new SQLException("No se pudo revisar la carpeta de migraciones.", ex);
+        }
+        if (scripts.isEmpty()) throw new SQLException("La carpeta no contiene archivos .sql para Flyway.");
+
+        Map<MigrationVersion, Path> versioned = new HashMap<>();
+        java.util.regex.Pattern namePattern = java.util.regex.Pattern.compile("(?i)^V(\\d+(?:[._]\\d+)*)__.*\\.sql$");
+        for (Path script : scripts) {
+            java.util.regex.Matcher matcher = namePattern.matcher(script.getFileName().toString());
+            if (!matcher.matches()) continue;
+            MigrationVersion version = MigrationVersion.fromVersion(matcher.group(1));
+            Path first = versioned.putIfAbsent(version, script);
+            if (first != null) {
+                throw new SQLException("Flyway encontró más de una migración para la versión " + version + ":\n"
+                        + "• " + folder.relativize(first) + "\n• " + folder.relativize(script) + "\n\n"
+                        + "Elegí la carpeta específica que contiene las migraciones fuente (por ejemplo, "
+                        + "src/main/resources/db/migration), no una carpeta superior que también incluya "
+                        + "copias compiladas como target/classes. No se creó ninguna base temporal.");
+            }
         }
     }
 

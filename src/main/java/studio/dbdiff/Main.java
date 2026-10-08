@@ -269,7 +269,7 @@ public final class Main {
             return;
         }
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Seleccionar carpeta raíz de migraciones Flyway");
+        chooser.setDialogTitle("Seleccionar carpeta de migraciones Flyway (V1__..., V2__...)");
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         chooser.setAcceptAllFileFilterUsed(false);
         if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return;
