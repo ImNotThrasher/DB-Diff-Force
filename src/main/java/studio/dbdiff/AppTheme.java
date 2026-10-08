@@ -51,6 +51,13 @@ public final class AppTheme {
         UIManager.put("OptionPane.background", panel); UIManager.put("OptionPane.messageForeground", foreground);
         UIManager.put("CheckBox.background", panel); UIManager.put("CheckBox.foreground", foreground);
         UIManager.put("ComboBox.background", panel); UIManager.put("ComboBox.foreground", foreground);
+        UIManager.put("ComboBox.buttonBackground", panel);
+        UIManager.put("ComboBox.buttonShadow", border); UIManager.put("ComboBox.buttonDarkShadow", border);
+        UIManager.put("ComboBox.buttonHighlight", panel);
+        UIManager.put("ComboBox.disabledBackground", dark ? DARK_BACKGROUND : Color.WHITE);
+        UIManager.put("ComboBox.disabledForeground", dark ? new Color(157, 166, 178) : new Color(105, 116, 130));
+        UIManager.put("ComboBox.selectionBackground", dark ? new Color(57, 78, 105) : new Color(190, 211, 235));
+        UIManager.put("ComboBox.selectionForeground", foreground);
         UIManager.put("TextField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("TextField.foreground", foreground);
         UIManager.put("PasswordField.background", dark ? DARK_BACKGROUND : Color.WHITE); UIManager.put("PasswordField.foreground", foreground);
         UIManager.put("Button.background", panel); UIManager.put("Button.foreground", foreground);
@@ -70,7 +77,7 @@ public final class AppTheme {
     }
 
     private static void applyTree(Component node, JComponent header, Color panel, Color foreground, Color border, boolean dark) {
-        if (node instanceof JPanel || node instanceof JScrollPane || node instanceof JViewport || node instanceof JSplitPane) node.setBackground(panel);
+        if ((node instanceof JPanel && node != header) || node instanceof JScrollPane || node instanceof JViewport || node instanceof JSplitPane) node.setBackground(panel);
         if (node instanceof JLabel label) {
             label.setOpaque(false);
             boolean inHeader = header != null && SwingUtilities.isDescendingFrom(label, header);
