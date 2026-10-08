@@ -1,0 +1,248 @@
+package studio.dbdiff;
+
+import java.sql.*;
+import java.util.*;
+
+/** Read-only MariaDB schema reader. This connector exposes no SQL execution method. */
+public final class MariaDbConnector implements DatabaseConnector {
+    private Connection connection;
+    private String database;
+
+    @Override public void connect(Endpoint endpoint) throws SQLException {
+        close();
+        database = endpoint.database();
+        String url = "jdbc:mariadb://" + endpoint.host() + ":" + endpoint.port() + "/" +
+                encodePath(database) + "?connectTimeout=8000&socketTimeout=15000&useServerPrepStmts=true&useCursorFetch=true" + (endpoint.useTls() ? "&sslMode=verify-full" : "");
+        Properties properties = new Properties();
+        properties.setProperty("user", endpoint.user());
+        char[] secret = endpoint.password();
+        try {
+            properties.setProperty("password", new String(secret));
+            connection = DriverManager.getConnection(url, properties);
+        } finally {
+            Arrays.fill(secret, '\0');
+            properties.remove("password");
+        }
+    }
+
+    @Override public List<SchemaObject> listObjects() throws SQLException {
+        requireConnection();
+        List<SchemaObject> result = new ArrayList<>();
+        String sql = "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA=? ORDER BY TABLE_NAME";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, database);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String type = rs.getString(2);
+                    SchemaObject.Kind kind = "VIEW".equalsIgnoreCase(type) ? SchemaObject.Kind.VIEW : SchemaObject.Kind.TABLE;
+                    result.add(new SchemaObject(new SchemaObject.Key(kind, rs.getString(1)), "", ""));
+                }
+            }
+        }
+        String routines = "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? ORDER BY ROUTINE_NAME";
+        try (PreparedStatement ps = connection.prepareStatement(routines)) {
+            ps.setString(1, database);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    SchemaObject.Kind kind = "FUNCTION".equalsIgnoreCase(rs.getString(2)) ? SchemaObject.Kind.FUNCTION : SchemaObject.Kind.PROCEDURE;
+                    result.add(new SchemaObject(new SchemaObject.Key(kind, rs.getString(1)), "", ""));
+                }
+            }
+        }
+        result.sort(Comparator.comparing(SchemaObject::key));
+        return result;
+    }
+
+    @Override public SchemaObject loadObject(SchemaObject.Key key) throws SQLException {
+        requireConnection();
+        return switch (key.kind()) {
+            case TABLE -> loadTable(key);
+            case VIEW -> loadView(key);
+            case PROCEDURE, FUNCTION -> loadRoutine(key);
+        };
+    }
+
+    private SchemaObject loadTable(SchemaObject.Key key) throws SQLException {
+        StringBuilder text = new StringBuilder("TABLE ").append(quote(key.name())).append("\nCOLUMNS\n");
+        String columns = "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA, COLUMN_KEY FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION";
+        try (PreparedStatement ps = connection.prepareStatement(columns)) {
+            ps.setString(1, database); ps.setString(2, key.name());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    text.append("  ").append(quote(rs.getString("COLUMN_NAME"))).append(' ').append(rs.getString("COLUMN_TYPE"));
+                    text.append(" NULLABLE=").append(rs.getString("IS_NULLABLE"));
+                    String def = rs.getString("COLUMN_DEFAULT"); if (def != null) text.append(" DEFAULT=").append(def);
+                    String extra = rs.getString("EXTRA"); if (extra != null && !extra.isBlank()) text.append(' ').append(extra.toUpperCase(Locale.ROOT));
+                    String columnKey = rs.getString("COLUMN_KEY"); if (!"".equals(columnKey)) text.append(" KEY=").append(columnKey);
+                    text.append('\n');
+                }
+            }
+        }
+        text.append("INDEXES\n");
+        String indexes = "SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, INDEX_TYPE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME, SEQ_IN_INDEX";
+        try (PreparedStatement ps = connection.prepareStatement(indexes)) {
+            ps.setString(1, database); ps.setString(2, key.name());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) text.append("  ").append(quote(rs.getString("INDEX_NAME"))).append(" ")
+                        .append(rs.getInt("NON_UNIQUE") == 0 ? "UNIQUE " : "").append(rs.getString("INDEX_TYPE"))
+                        .append(" ").append(quote(rs.getString("COLUMN_NAME"))).append(" POSITION=").append(rs.getInt("SEQ_IN_INDEX")).append('\n');
+            }
+        }
+        String summary = text.toString();
+        try {
+            String ddl = showCreate(key, 2);
+            return new SchemaObject(key, ddl, normalize(ddl).replaceAll("(?i)AUTO_INCREMENT\\s*=\\s*\\d+", "AUTO_INCREMENT=<value>"));
+        } catch (SQLException ex) {
+            String definition = "-- DB-Diff Studio: SHOW CREATE TABLE unavailable (" + safeMessage(ex) + ")\n-- Schema summary for review only; no executable DDL follows.\n" + summary;
+            return new SchemaObject(key, definition, normalize(definition));
+        }
+    }
+
+    @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges) throws SQLException {
+        requireConnection();
+        if (!(peerConnector instanceof MariaDbConnector peer)) throw new SQLException("Row comparison requires matching database connectors.");
+        peer.requireConnection();
+        if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException("Row comparison is available for tables only.");
+        if (maxChanges < 1) throw new IllegalArgumentException("maxChanges must be positive");
+        List<RowDiff.Column> columns = readColumns(key.name());
+        List<RowDiff.Column> primaryKey = readPrimaryKey(key.name());
+        List<RowDiff.Column> peerColumns = peer.readColumns(key.name());
+        List<RowDiff.Column> peerPrimaryKey = peer.readPrimaryKey(key.name());
+        if (columns.isEmpty()) throw new SQLException("Table has no visible columns or SELECT permission is missing.");
+        if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey)) throw new SQLException("Skipped: table columns or primary key differ between endpoints. Compare table schema first.");
+        if (primaryKey.isEmpty()) throw new SQLException("Skipped: table has no primary key; rows cannot be matched safely.");
+        for (RowDiff.Column column : columns) if (!safeComparable(column.type()))
+            throw new SQLException("Skipped: column " + column.name() + " has unsupported comparison type " + column.type() + ".");
+        for (RowDiff.Column column : primaryKey) if (!safeKey(column.type()))
+            throw new SQLException("Skipped: primary key column " + column.name() + " has unsupported ordering type " + column.type() + ".");
+
+        String columnsSql = columns.stream().map(c -> quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
+        String order = primaryKey.stream().map(c -> isText(c.type()) ? "CAST(" + quote(c.name()) + " AS BINARY)" : quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
+        String query = "SELECT " + columnsSql + " FROM " + quote(database) + "." + quote(key.name()) + " ORDER BY " + order;
+        String peerQuery = "SELECT " + columnsSql + " FROM " + quote(peer.database) + "." + quote(key.name()) + " ORDER BY " + order;
+        List<RowDiff.RowChange> changes = new ArrayList<>(); long[] counts = new long[3]; boolean truncated = false;
+        try (PreparedStatement left = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+             PreparedStatement right = peer.connection.prepareStatement(peerQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+            left.setFetchSize(500); right.setFetchSize(500);
+            try (ResultSet a = left.executeQuery(); ResultSet b = right.executeQuery()) {
+                boolean hasA = a.next(), hasB = b.next();
+                while (hasA || hasB) {
+                    Map<String, Object> rowA = hasA ? readRow(a, columns) : null;
+                    Map<String, Object> rowB = hasB ? readRow(b, columns) : null;
+                    int comparison = !hasA ? 1 : !hasB ? -1 : compareKeys(rowA, rowB, primaryKey);
+                    if (comparison < 0) {
+                        counts[0]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.SOURCE_ONLY, keyOf(rowA, primaryKey), rowA, null)); hasA = a.next();
+                    } else if (comparison > 0) {
+                        counts[1]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.TARGET_ONLY, keyOf(rowB, primaryKey), null, rowB)); hasB = b.next();
+                    } else {
+                        if (!rowsEqual(rowA, rowB, columns)) {
+                            counts[2]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.DIFFERENT, keyOf(rowA, primaryKey), rowA, rowB));
+                        }
+                        hasA = a.next(); hasB = b.next();
+                    }
+                }
+            }
+        }
+        truncated = counts[0] + counts[1] + counts[2] > changes.size();
+        return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], truncated,
+                truncated ? "Only the first " + maxChanges + " row changes are retained; export is limited to those rows." : "");
+    }
+
+    private List<RowDiff.Column> readColumns(String table) throws SQLException {
+        List<RowDiff.Column> columns = new ArrayList<>();
+        String sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, CHARACTER_SET_NAME, COLLATION_NAME, DATETIME_PRECISION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, database); ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) columns.add(new RowDiff.Column(rs.getString("COLUMN_NAME"), rs.getString("DATA_TYPE").toLowerCase(Locale.ROOT), columnSignature(rs), "YES".equals(rs.getString("IS_NULLABLE"))));
+            }
+        }
+        return columns;
+    }
+
+    private List<RowDiff.Column> readPrimaryKey(String table) throws SQLException {
+        Map<Integer, RowDiff.Column> ordered = new TreeMap<>();
+        String sql = "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.COLUMN_TYPE, c.IS_NULLABLE, c.CHARACTER_SET_NAME, c.COLLATION_NAME, c.DATETIME_PRECISION, s.SEQ_IN_INDEX FROM information_schema.STATISTICS s JOIN information_schema.COLUMNS c ON c.TABLE_SCHEMA=s.TABLE_SCHEMA AND c.TABLE_NAME=s.TABLE_NAME AND c.COLUMN_NAME=s.COLUMN_NAME WHERE s.TABLE_SCHEMA=? AND s.TABLE_NAME=? AND s.INDEX_NAME='PRIMARY' ORDER BY s.SEQ_IN_INDEX";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, database); ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) ordered.put(rs.getInt("SEQ_IN_INDEX"), new RowDiff.Column(rs.getString("COLUMN_NAME"), rs.getString("DATA_TYPE").toLowerCase(Locale.ROOT), columnSignature(rs), "YES".equals(rs.getString("IS_NULLABLE"))));
+            }
+        }
+        return List.copyOf(ordered.values());
+    }
+
+    private static String columnSignature(ResultSet rs) throws SQLException {
+        return rs.getString("COLUMN_TYPE") + "|charset=" + String.valueOf(rs.getString("CHARACTER_SET_NAME"))
+                + "|collation=" + String.valueOf(rs.getString("COLLATION_NAME"))
+                + "|datetime_precision=" + String.valueOf(rs.getString("DATETIME_PRECISION"));
+    }
+
+    private static void addChange(List<RowDiff.RowChange> changes, int limit, RowDiff.RowChange change) { if (changes.size() < limit) changes.add(change); }
+    private static boolean safeComparable(String type) { return safeKey(type) || Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "float", "double", "real", "char", "varchar", "tinytext", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "enum", "set").contains(type); }
+    private static boolean safeKey(String type) { return Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "char", "varchar", "date", "datetime", "timestamp", "time", "year").contains(type); }
+    private static boolean isText(String type) { return Set.of("char", "varchar").contains(type); }
+    private static Map<String, Object> readRow(ResultSet rs, List<RowDiff.Column> columns) throws SQLException {
+        Map<String, Object> values = new LinkedHashMap<>(); for (int i = 0; i < columns.size(); i++) values.put(columns.get(i).name(), rs.getObject(i + 1)); return values;
+    }
+    private static Map<String, Object> keyOf(Map<String, Object> row, List<RowDiff.Column> keys) { Map<String, Object> result = new LinkedHashMap<>(); for (RowDiff.Column key : keys) result.put(key.name(), row.get(key.name())); return result; }
+    private static int compareKeys(Map<String, Object> a, Map<String, Object> b, List<RowDiff.Column> keys) throws SQLException {
+        for (RowDiff.Column key : keys) { int c = compareValue(a.get(key.name()), b.get(key.name()), key.type()); if (c != 0) return c; } return 0;
+    }
+    private static int compareValue(Object a, Object b, String type) throws SQLException {
+        if (a == null || b == null) { if (a == b) return 0; throw new SQLException("Primary key unexpectedly contains NULL."); }
+        if (Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric").contains(type)) return new java.math.BigDecimal(a.toString()).compareTo(new java.math.BigDecimal(b.toString()));
+        if (isText(type)) return compareUtf8(a.toString(), b.toString());
+        return canonical(a, type).compareTo(canonical(b, type));
+    }
+    private static int compareUtf8(String a, String b) {
+        byte[] left = a.getBytes(java.nio.charset.StandardCharsets.UTF_8), right = b.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (int i = 0; i < Math.min(left.length, right.length); i++) { int c = Integer.compare(Byte.toUnsignedInt(left[i]), Byte.toUnsignedInt(right[i])); if (c != 0) return c; }
+        return Integer.compare(left.length, right.length);
+    }
+    private static String canonical(Object value, String type) { return value instanceof byte[] bytes ? Base64.getEncoder().encodeToString(bytes) : value.toString(); }
+    private static boolean rowsEqual(Map<String, Object> a, Map<String, Object> b, List<RowDiff.Column> columns) {
+        for (RowDiff.Column column : columns) if (!Objects.deepEquals(canonicalObject(a.get(column.name())), canonicalObject(b.get(column.name())))) return false; return true;
+    }
+    private static Object canonicalObject(Object value) {
+        if (value instanceof byte[] bytes) return Base64.getEncoder().encodeToString(bytes);
+        if (value instanceof java.math.BigDecimal decimal) return decimal.stripTrailingZeros();
+        return value == null ? null : value.toString();
+    }
+
+    private SchemaObject loadView(SchemaObject.Key key) throws SQLException {
+        try { String definition = showCreate(key, 2); return new SchemaObject(key, definition, normalize(definition)); }
+        catch (SQLException ex) { String definition = "-- DB-Diff Studio: SHOW CREATE VIEW unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, normalize(definition)); }
+    }
+
+    private SchemaObject loadRoutine(SchemaObject.Key key) throws SQLException {
+        try { String definition = showCreate(key, 3); return new SchemaObject(key, definition, normalize(definition)); }
+        catch (SQLException ex) { String definition = "-- DB-Diff Studio: SHOW CREATE " + key.kind() + " unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, normalize(definition)); }
+    }
+
+    private String showCreate(SchemaObject.Key key, int ddlColumn) throws SQLException {
+        String command = switch (key.kind()) {
+            case TABLE -> "TABLE"; case VIEW -> "VIEW"; case PROCEDURE -> "PROCEDURE"; case FUNCTION -> "FUNCTION";
+        };
+        String sql = "SHOW CREATE " + command + " " + quote(database) + "." + quote(key.name());
+        try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(sql)) {
+            if (!rs.next()) throw new SQLException("No CREATE statement returned; check object visibility and privileges.");
+            String ddl = rs.getString(ddlColumn);
+            if (ddl == null || ddl.isBlank()) throw new SQLException("Server returned an empty CREATE statement; check privileges and server version.");
+            return normalize(ddl);
+        }
+    }
+
+    @Override public void close() {
+        if (connection != null) try { connection.close(); } catch (SQLException ignored) { }
+        connection = null; database = null;
+    }
+    private void requireConnection() throws SQLException { if (connection == null || connection.isClosed()) throw new SQLException("Not connected"); }
+    private static String quote(String value) { return "`" + value.replace("`", "``") + "`"; }
+    private static String normalize(String value) {
+        if (value == null) return "<definition unavailable: insufficient privileges or unsupported object>";
+        return value.replace("\r\n", "\n").replace('\r', '\n').lines().map(String::stripTrailing).toList().stream().collect(java.util.stream.Collectors.joining("\n")).strip();
+    }
+    private static String safeMessage(SQLException ex) { return ex.getMessage() == null ? ex.getSQLState() : ex.getMessage().replaceAll("[\\r\\n]+", " "); }
+    private static String encodePath(String path) { return path.replace("%", "%25").replace("/", "%2F").replace("?", "%3F").replace("#", "%23"); }
+}
