@@ -3,16 +3,32 @@ package studio.dbdiff;
 import java.util.*;
 
 public final class SqlExporter {
+    public enum Strategy { ALTER, CREATE, CREATE_OR_REPLACE }
+
     private SqlExporter() { }
 
     public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations, String targetDatabase) {
-        return export(results, operations, targetDatabase, false, false);
+        return export(results, operations, targetDatabase, false, false, false, DatabaseEngine.MARIADB);
     }
 
     public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
                                 String targetDatabase, boolean transaction, boolean dropIfExists) {
+        return export(results, operations, targetDatabase, transaction, dropIfExists, false, DatabaseEngine.MARIADB);
+    }
+
+    public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
+                                String targetDatabase, boolean transaction, boolean dropIfExists,
+                                boolean replaceObjects, DatabaseEngine engine) {
+        return export(results, operations, targetDatabase, transaction, dropIfExists,
+                replaceObjects ? Strategy.CREATE_OR_REPLACE : Strategy.ALTER, engine);
+    }
+
+    public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
+                                String targetDatabase, boolean transaction, boolean dropIfExists,
+                                Strategy strategy, DatabaseEngine engine) {
         StringBuilder out = new StringBuilder("-- " + AppInfo.NAME + " export\n-- Review and adapt before use. This file was not executed.\n-- Definitions may be incomplete when MariaDB metadata permissions are limited.\n");
         if (transaction) out.append("-- MariaDB may implicitly commit DDL; this transaction does not guarantee schema rollback.\n");
+        if (strategy == Strategy.CREATE_OR_REPLACE) out.append("-- CREATE OR REPLACE overwrites existing compatible objects; for tables on MariaDB it drops the table and its data.\n");
         out.append('\n');
         if (transaction) out.append("START TRANSACTION;\n\n");
         for (DiffEngine.Result result : results) {
@@ -21,32 +37,55 @@ public final class SqlExporter {
             out.append("-- ").append(result.status()).append(" ").append(object.key().kind()).append(" ").append(object.key().name()).append('\n');
             out.append("USE ").append(quote(targetDatabase)).append(";\n");
             switch (result.status()) {
-                case SOURCE_ONLY -> out.append("-- Proposed operation: CREATE from source definition\n").append(sourceSql(result.source())).append("\n\n");
+                case SOURCE_ONLY -> out.append("-- Proposed operation: create object from source definition\n")
+                        .append(sourceSql(result.source(), strategy == Strategy.CREATE_OR_REPLACE, engine)).append("\n\n");
                 case TARGET_ONLY -> out.append("-- Proposed operation: DROP target object\n").append(dropSql(object.key(), dropIfExists)).append("\n\n");
-                case CHANGED -> out.append(changedSql(result, dropIfExists)).append("\n\n");
+                case CHANGED -> out.append(changedSql(result, targetDatabase, dropIfExists, strategy, engine)).append("\n\n");
                 default -> { }
             }
         }
         if (transaction) out.append("COMMIT;\n");
         return out.toString();
     }
-    private static String changedSql(DiffEngine.Result result, boolean dropIfExists) {
+    private static String changedSql(DiffEngine.Result result, String targetDatabase, boolean dropIfExists, Strategy strategy, DatabaseEngine engine) {
         SchemaObject object = result.source();
         if (object == null || unavailable(object)) return "-- REVIEW ONLY: complete source DDL is unavailable; no migration statement generated.\n" + (object == null ? "-- Source object could not be read." : object.definition());
         return switch (object.key().kind()) {
-            case TABLE -> "-- REVIEW ONLY: table changes are not converted to ALTER TABLE statements. Compare the complete source CREATE TABLE definition below and author a migration.\n" + object.definition() + ";";
-            case VIEW -> object.definition().replaceFirst("(?i)^\\s*CREATE\\s+", "CREATE OR REPLACE ") + ";";
-            case PROCEDURE, FUNCTION -> routineReplace(object.key(), object.definition(), dropIfExists);
+            case TABLE -> changedTableSql(result, targetDatabase, strategy, engine);
+            case VIEW -> statementWithReplace(object.definition(), true) + ";";
+            case PROCEDURE, FUNCTION -> strategy == Strategy.CREATE_OR_REPLACE && engine == DatabaseEngine.MARIADB
+                    ? routineCreate(statementWithReplace(object.definition(), true))
+                    : routineReplace(object.key(), object.definition(), dropIfExists);
         };
     }
-    private static String sourceSql(SchemaObject object) {
+
+    private static String changedTableSql(DiffEngine.Result result, String database, Strategy strategy, DatabaseEngine engine) {
+        SchemaObject source = result.source(), target = result.target();
+        if (strategy == Strategy.CREATE_OR_REPLACE && engine == DatabaseEngine.MARIADB)
+            return "-- WARNING: this drops and recreates the destination table, deleting its existing data.\n" + statementWithReplace(source.definition(), true) + ";";
+        if (strategy == Strategy.CREATE)
+            return "-- REVIEW ONLY: CREATE cannot update a table that already exists. Choose ALTER TABLE or a supported replacement strategy.\n" + source.definition() + ";";
+        if (target == null || unavailable(target))
+            return "-- REVIEW ONLY: the destination table definition is unavailable, so a safe ALTER TABLE cannot be derived.\n" + source.definition() + ";";
+        return TableAlterGenerator.generate(source.definition(), target.definition(), database, source.key().name())
+                .orElseGet(() -> "-- REVIEW ONLY: these table changes include clauses the automatic ALTER TABLE generator cannot safely translate.\n" + source.definition() + ";");
+    }
+    private static String sourceSql(SchemaObject object, boolean replaceObjects, DatabaseEngine engine) {
         if (object == null) return "-- Missing source definition";
         if (unavailable(object)) return "-- REVIEW ONLY: complete DDL unavailable; no executable statement generated.\n" + object.definition();
+        boolean useReplace = replaceObjects && (engine == DatabaseEngine.MARIADB
+                || object.key().kind() == SchemaObject.Kind.VIEW);
         return switch (object.key().kind()) {
-            case VIEW -> object.definition().replaceFirst("(?i)^\\s*CREATE\\s+", "CREATE OR REPLACE ") + ";";
-            case PROCEDURE, FUNCTION -> routineCreate(object.definition());
-            case TABLE -> object.definition() + ";";
+            case VIEW -> statementWithReplace(object.definition(), useReplace) + ";";
+            case PROCEDURE, FUNCTION -> routineCreate(statementWithReplace(object.definition(), useReplace));
+            case TABLE -> engine == DatabaseEngine.MARIADB
+                    ? statementWithReplace(object.definition(), useReplace) + ";"
+                    : object.definition() + ";";
         };
+    }
+    private static String statementWithReplace(String ddl, boolean replace) {
+        String normalized = ddl.replaceFirst("(?i)^\\s*CREATE\\s+OR\\s+REPLACE\\s+", "CREATE ");
+        return replace ? normalized.replaceFirst("(?i)^\\s*CREATE\\s+", "CREATE OR REPLACE ") : normalized;
     }
     private static String routineReplace(SchemaObject.Key key, String ddl, boolean dropIfExists) {
         return "DROP " + (key.kind() == SchemaObject.Kind.PROCEDURE ? "PROCEDURE" : "FUNCTION")

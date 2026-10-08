@@ -72,9 +72,9 @@ public final class Main {
     private final JFrame frame = new JFrame(AppInfo.NAME);
     private final DefaultListModel<Object> resultModel = new DefaultListModel<>();
     private final List<Object> allResultItems = new ArrayList<>();
-    private final JTextField objectSearch = new JTextField();
+    private final JTextField objectSearch = new PlaceholderTextField("Buscar objetos...");
     private final JPanel objectSearchBox = new JPanel(new BorderLayout(6, 0));
-    private final JLabel objectSearchIcon = new JLabel(UiIcons.themed(UiIcons.SEARCH, 16));
+    private final JLabel objectSearchIcon = new JLabel(UiIcons.themed(UiIcons.SEARCH, 18));
     private final List<JLabel> objectLegendMarkers = new ArrayList<>();
     private final JList<Object> resultList = new JList<>(resultModel) {
         @Override public String getToolTipText(MouseEvent event) {
@@ -89,6 +89,7 @@ public final class Main {
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
     private DatabaseConnector source, target;
+    private DatabaseEngine schemaEngine = DatabaseEngine.MARIADB;
     private String sourceDatabase = "", targetDatabase = "";
     private List<SchemaObject> sourceObjects = List.of(), targetObjects = List.of();
     private boolean compared;
@@ -223,7 +224,7 @@ public final class Main {
             try {
                 a.connect(endpoints[0]); b.connect(endpoints[1]);
                 List<SchemaObject> ao = a.listObjects(), bo = b.listObjects();
-                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; setConnectionAvailable(true); sourceDatabase = endpoints[0].database(); targetDatabase = endpoints[1].database(); comparisonView.setDatabases(sourceDatabase, targetDatabase); sourceObjects = ao; targetObjects = bo; loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null; compared = false; comparedKeys.clear(); showCatalog(); setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos encontrados · seleccioná un objeto para cargar su definición"); });
+                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; schemaEngine = endpoints[0].engine(); setConnectionAvailable(true); sourceDatabase = endpoints[0].database(); targetDatabase = endpoints[1].database(); comparisonView.setDatabases(sourceDatabase, targetDatabase); sourceObjects = ao; targetObjects = bo; loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null; compared = false; comparedKeys.clear(); showCatalog(); setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos encontrados · seleccioná un objeto para cargar su definición"); });
             } catch (SQLException | RuntimeException ex) { a.close(); b.close(); SwingUtilities.invokeLater(() -> { setBusy(false, "Error de conexión"); error("No se pudo conectar", ex); }); }
             finally { endpoints[0].clearPassword(); endpoints[1].clearPassword(); }
         });
@@ -336,13 +337,21 @@ public final class Main {
         JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0)); legend.setOpaque(false);
         addLegendItem(legend, "●", "Igual", new Color(49, 130, 97));
         addLegendItem(legend, "●", "Modificado", new Color(178, 112, 24));
-        addLegendItem(legend, "◀", "Solo origen", new Color(56, 112, 184));
-        addLegendItem(legend, "▶", "Solo destino", new Color(111, 122, 140));
+        addLegendItem(legend, UiIcons.themed(UiIcons.SOURCE_ONLY, 16), "Solo origen", new Color(56, 112, 184));
+        addLegendItem(legend, UiIcons.themed(UiIcons.TARGET_ONLY, 16), "Solo destino", new Color(111, 122, 140));
         return legend;
     }
 
     private void addLegendItem(JPanel legend, String symbol, String description, Color color) {
         JLabel marker = new JLabel(symbol); marker.setFont(new Font("Segoe UI", Font.BOLD, 11)); marker.setForeground(color);
+        objectLegendMarkers.add(marker);
+        JLabel text = new JLabel(description); text.setFont(new Font("Segoe UI", Font.PLAIN, 10)); text.setForeground(new Color(105, 118, 136));
+        JPanel item = new JPanel(new BorderLayout(3, 0)); item.setOpaque(false); item.add(marker, BorderLayout.WEST); item.add(text, BorderLayout.CENTER);
+        legend.add(item);
+    }
+
+    private void addLegendItem(JPanel legend, javax.swing.Icon icon, String description, Color color) {
+        JLabel marker = new JLabel(icon); marker.setPreferredSize(new Dimension(12, 14)); marker.setForeground(color);
         objectLegendMarkers.add(marker);
         JLabel text = new JLabel(description); text.setFont(new Font("Segoe UI", Font.PLAIN, 10)); text.setForeground(new Color(105, 118, 136));
         JPanel item = new JPanel(new BorderLayout(3, 0)); item.setOpaque(false); item.add(marker, BorderLayout.WEST); item.add(text, BorderLayout.CENTER);
@@ -679,18 +688,60 @@ public final class Main {
     }
 
     private void export() {
-        List<DiffEngine.Result> chosen = resultList.getSelectedValuesList().stream().filter(DiffEngine.Result.class::isInstance).map(DiffEngine.Result.class::cast).toList();
-        if (chosen.isEmpty()) { JOptionPane.showMessageDialog(frame, "Seleccioná uno o más resultados comparados para exportar. Los objetos no seleccionados no se exportan.", "Elegí resultados para exportar", JOptionPane.INFORMATION_MESSAGE); return; }
-        final List<DiffEngine.Result> exportResults = List.copyOf(chosen);
+        List<DiffEngine.Result> available = allResultItems.stream().filter(DiffEngine.Result.class::isInstance)
+                .map(DiffEngine.Result.class::cast).filter(result -> result.status() != DiffEngine.Status.IDENTICAL).toList();
+        if (available.isEmpty()) { JOptionPane.showMessageDialog(frame, "No hay objetos comparados con cambios para exportar.", "Sin cambios", JOptionPane.INFORMATION_MESSAGE); return; }
         EnumSet<DiffEngine.Status> ops = EnumSet.of(DiffEngine.Status.CHANGED, DiffEngine.Status.SOURCE_ONLY, DiffEngine.Status.TARGET_ONLY);
         JTextArea preview = area();
         JCheckBox[] checks = new JCheckBox[3]; JPanel choices = new JPanel(new GridLayout(0, 1));
         JCheckBox transaction = new JCheckBox("Envolver el script en START TRANSACTION / COMMIT");
         JCheckBox dropIfExists = new JCheckBox("Usar DROP IF EXISTS al eliminar objetos o reemplazar rutinas");
         dropIfExists.setToolTipText("Solo evita errores si ya no existe. DROP TABLE IF EXISTS igualmente elimina la tabla y sus datos si está presente.");
+        JComboBox<String> createStrategy = new JComboBox<>(new String[]{"ALTER TABLE (recomendado)", "CREATE", "CREATE OR REPLACE"});
+        createStrategy.setSelectedIndex(0);
+        createStrategy.setToolTipText("Para tablas modificadas, ALTER genera cambios de columnas e índices cuando puede derivarlos. CREATE OR REPLACE en MariaDB elimina los datos de la tabla.");
+        JLabel warning = new JLabel();
+        List<DiffEngine.Result> currentlySelected = resultList.getSelectedValuesList().stream()
+                .filter(DiffEngine.Result.class::isInstance).map(DiffEngine.Result.class::cast).toList();
+        DefaultListModel<DiffEngine.Result> exportModel = new DefaultListModel<>();
+        JList<DiffEngine.Result> exportSelection = new JList<>(exportModel);
+        exportSelection.setCellRenderer(new ResultRenderer());
+        exportSelection.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        exportSelection.setVisibleRowCount(4);
+        for (DiffEngine.Result result : available) exportModel.addElement(result);
+        List<DiffEngine.Result> preselected = currentlySelected.isEmpty() ? available : currentlySelected;
+        for (int i = 0; i < exportModel.size(); i++) if (preselected.contains(exportModel.get(i))) exportSelection.addSelectionInterval(i, i);
+        JButton selectAll = new JButton("Seleccionar todos");
+        JButton clearSelection = new JButton("Limpiar");
+        JPanel selectionActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        selectionActions.add(selectAll); selectionActions.add(clearSelection);
+        JPanel selectionHeader = new JPanel(new BorderLayout());
+        selectionHeader.add(new JLabel("Objetos a exportar (Ctrl/Shift para selección múltiple)"), BorderLayout.WEST);
+        selectionHeader.add(selectionActions, BorderLayout.EAST);
+        JPanel selectionPanel = new JPanel(new BorderLayout(4, 4));
+        selectionPanel.add(selectionHeader, BorderLayout.NORTH);
+        selectionPanel.add(new JScrollPane(exportSelection), BorderLayout.CENTER);
+        selectionPanel.setPreferredSize(new Dimension(760, 190));
+        selectionPanel.setMinimumSize(new Dimension(360, 115));
         Runnable refreshPreview = () -> {
-            preview.setText(SqlExporter.export(exportResults, ops, targetDatabase, transaction.isSelected(), dropIfExists.isSelected()));
+            List<DiffEngine.Result> exportResults = exportSelection.getSelectedValuesList();
+            SqlExporter.Strategy strategy = switch (createStrategy.getSelectedIndex()) {
+                case 1 -> SqlExporter.Strategy.CREATE;
+                case 2 -> SqlExporter.Strategy.CREATE_OR_REPLACE;
+                default -> SqlExporter.Strategy.ALTER;
+            };
+            preview.setText(SqlExporter.export(exportResults, ops, targetDatabase, transaction.isSelected(), dropIfExists.isSelected(), strategy, schemaEngine));
             preview.setCaretPosition(0);
+            preview.setBackground(ThemePalette.forMode(AppTheme.isDark(theme)).editor());
+            preview.setForeground(ThemePalette.forMode(AppTheme.isDark(theme)).foreground());
+            if (exportResults.isEmpty()) warning.setText("Seleccioná al menos un objeto para ver el script.");
+            else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MARIADB && exportResults.stream().anyMatch(r -> r.key().kind() == SchemaObject.Kind.TABLE && r.status() == DiffEngine.Status.CHANGED))
+                warning.setText("CREATE OR REPLACE TABLE elimina y recrea la tabla destino, incluidos sus datos.");
+            else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MYSQL)
+                warning.setText("MySQL admite CREATE OR REPLACE para vistas. Las tablas modificadas se exportan como ALTER si se pueden derivar.");
+            else if (transaction.isSelected())
+                warning.setText("MariaDB puede confirmar DDL automáticamente; la transacción no garantiza rollback del esquema.");
+            else warning.setText("El SQL solo se exporta; la aplicación nunca lo ejecuta.");
         };
         DiffEngine.Status[] statuses = {DiffEngine.Status.SOURCE_ONLY, DiffEngine.Status.CHANGED, DiffEngine.Status.TARGET_ONLY};
         String[] labels = {"CREATE: objetos solo en origen", "ALTER / reemplazar: objetos modificados", "DROP: objetos solo en destino"};
@@ -706,12 +757,39 @@ public final class Main {
         }
         transaction.addActionListener(event -> refreshPreview.run());
         dropIfExists.addActionListener(event -> refreshPreview.run());
+        createStrategy.addActionListener(event -> refreshPreview.run());
+        exportSelection.addListSelectionListener(event -> { if (!event.getValueIsAdjusting()) refreshPreview.run(); });
+        selectAll.addActionListener(event -> { if (!exportModel.isEmpty()) exportSelection.setSelectionInterval(0, exportModel.size() - 1); });
+        clearSelection.addActionListener(event -> exportSelection.clearSelection());
         choices.add(transaction); choices.add(dropIfExists);
+        JPanel strategy = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        JLabel strategyLabel = new JLabel("Estrategia para objetos modificados:");
+        boolean dark = AppTheme.isDark(theme); ThemePalette palette = ThemePalette.forMode(dark);
+        strategyLabel.setForeground(palette.foreground()); createStrategy.setBackground(palette.panel()); createStrategy.setForeground(palette.foreground());
+        warning.setForeground(dark ? new Color(236, 184, 95) : new Color(155, 79, 21));
+        strategy.add(strategyLabel); strategy.add(createStrategy);
+        JPanel optionStack = new JPanel(new BorderLayout(4, 4)); optionStack.add(choices, BorderLayout.NORTH); optionStack.add(strategy, BorderLayout.SOUTH);
+        JPanel previewPanel = new JPanel(new BorderLayout(6, 6));
+        previewPanel.add(optionStack, BorderLayout.NORTH);
+        previewPanel.add(new JScrollPane(preview), BorderLayout.CENTER);
+        previewPanel.setMinimumSize(new Dimension(360, 250));
+        JSplitPane exportSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, selectionPanel, previewPanel);
+        exportSplit.setContinuousLayout(true);
+        exportSplit.setOneTouchExpandable(true);
+        exportSplit.setResizeWeight(.27);
+        exportSplit.setDividerSize(9);
+        exportSplit.setDividerLocation(.27);
         refreshPreview.run();
-        JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(choices, BorderLayout.NORTH); wrapper.add(new JScrollPane(preview), BorderLayout.CENTER); wrapper.setPreferredSize(new Dimension(720, 500));
-        JLabel warning = new JLabel("El SQL no se ejecuta desde la aplicación. MariaDB puede confirmar DDL automáticamente, incluso dentro de una transacción."); warning.setForeground(new Color(155, 79, 21)); wrapper.add(warning, BorderLayout.SOUTH);
-        int answer = JOptionPane.showConfirmDialog(frame, wrapper, "Revisar exportación SQL", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (answer != JOptionPane.OK_OPTION) return;
+        JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(exportSplit, BorderLayout.CENTER); wrapper.setPreferredSize(new Dimension(900, 740));
+        wrapper.add(warning, BorderLayout.SOUTH);
+        JOptionPane optionPane = new JOptionPane(wrapper, JOptionPane.PLAIN_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
+        JDialog dialog = optionPane.createDialog(frame, "Revisar exportación SQL");
+        dialog.setResizable(true);
+        dialog.setMinimumSize(new Dimension(760, 600));
+        dialog.setSize(new Dimension(930, 770));
+        dialog.setLocationRelativeTo(frame);
+        dialog.setVisible(true);
+        if (!Integer.valueOf(JOptionPane.OK_OPTION).equals(optionPane.getValue())) return;
         JFileChooser chooser = new JFileChooser(); chooser.setSelectedFile(new java.io.File("db-diff-exportacion.sql")); if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
         try { Files.writeString(chooser.getSelectedFile().toPath(), preview.getText(), StandardCharsets.UTF_8); JOptionPane.showMessageDialog(frame, "Se guardó el SQL. No se ejecutó.", "Exportación lista", JOptionPane.INFORMATION_MESSAGE); }
         catch (IOException ex) { error("No se pudo guardar la exportación", ex); }
@@ -786,6 +864,10 @@ public final class Main {
         objectSearchBox.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(palette.border()), new EmptyBorder(1, 8, 1, 7)));
         objectSearchIcon.setForeground(palette.foreground());
+        objectSearch.setBackground(palette.editor()); objectSearch.setForeground(palette.foreground());
+        objectSearch.setCaretColor(palette.foreground());
+        if (objectSearch instanceof PlaceholderTextField field)
+            field.setPlaceholderColor(dark ? new Color(142, 151, 164) : new Color(120, 130, 143));
         Color[] lightLegendColors = {new Color(49, 130, 97), new Color(178, 112, 24), new Color(56, 112, 184), new Color(111, 122, 140)};
         Color[] darkLegendColors = {new Color(111, 204, 148), new Color(230, 174, 85), new Color(107, 166, 239), new Color(154, 166, 181)};
         for (int i = 0; i < objectLegendMarkers.size(); i++) objectLegendMarkers.get(i).setForeground(dark ? darkLegendColors[i] : lightLegendColors[i]);
@@ -859,7 +941,9 @@ public final class Main {
             setBackground(selected && enabled ? list.getSelectionBackground() : list.getBackground());
             name.setForeground(foreground); type.setForeground(selected ? foreground : new Color(105, 118, 136));
             marker.setForeground(enabled ? markerColor(value, list.getBackground().getRed() < 90) : foreground);
-            marker.setText(markerText(value));
+            javax.swing.Icon statusIcon = markerIcon(value);
+            marker.setIcon(statusIcon);
+            marker.setText(statusIcon == null ? markerText(value) : "");
             type.setIcon(switch (key.kind()) {
                 case TABLE -> UiIcons.themed(UiIcons.TABLE, 14);
                 case VIEW -> UiIcons.themed(UiIcons.VIEW, 14);
@@ -896,6 +980,13 @@ public final class Main {
                 case SOURCE_ONLY -> "◀";
                 case TARGET_ONLY -> "▶";
             };
+        }
+
+        private static javax.swing.Icon markerIcon(Object value) {
+            int status = objectStatusRank(value);
+            if (status == 2) return UiIcons.themed(UiIcons.SOURCE_ONLY, 20);
+            if (status == 3) return UiIcons.themed(UiIcons.TARGET_ONLY, 20);
+            return null;
         }
 
         private static Color markerColor(Object value, boolean dark) {
