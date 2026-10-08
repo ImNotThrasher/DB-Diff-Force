@@ -29,15 +29,30 @@ public final class SqlExporter {
                                 String targetDatabase, boolean transaction, boolean dropIfExists,
                                 Strategy strategy, DatabaseEngine engine,
                                 Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies) {
-        List<DiffEngine.Result> ordered = orderByDependencies(results, operations, dependencies);
+        return export(results, operations, targetDatabase, transaction, dropIfExists, strategy, engine,
+                dependencies, dependencies);
+    }
+    public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
+                                String targetDatabase, boolean transaction, boolean dropIfExists,
+                                Strategy strategy, DatabaseEngine engine,
+                                Map<SchemaObject.Key, Set<SchemaObject.Key>> sourceDependencies,
+                                Map<SchemaObject.Key, Set<SchemaObject.Key>> targetDependencies) {
+        List<DiffEngine.Result> ordered = orderByDependencies(results, operations, sourceDependencies, targetDependencies);
         return engine == DatabaseEngine.SQLSERVER
                 ? exportSqlServer(ordered, operations, targetDatabase, transaction, dropIfExists, strategy)
                 : exportMySqlFamily(ordered, operations, targetDatabase, transaction, dropIfExists, strategy, engine);
     }
 
     /** Creates prerequisites first and drops dependents first, with stable type/name order for ties. */
-    private static List<DiffEngine.Result> orderByDependencies(List<DiffEngine.Result> results,
+    static List<DiffEngine.Result> orderByDependencies(List<DiffEngine.Result> results,
             Set<DiffEngine.Status> operations, Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies) {
+        return orderByDependencies(results, operations, dependencies, dependencies);
+    }
+
+    static List<DiffEngine.Result> orderByDependencies(List<DiffEngine.Result> results,
+            Set<DiffEngine.Status> operations,
+            Map<SchemaObject.Key, Set<SchemaObject.Key>> sourceDependencies,
+            Map<SchemaObject.Key, Set<SchemaObject.Key>> targetDependencies) {
         List<DiffEngine.Result> drops = new ArrayList<>(), creates = new ArrayList<>();
         for (DiffEngine.Result result : results) {
             if (!operations.contains(result.status()) || result.status() == DiffEngine.Status.IDENTICAL) continue;
@@ -50,8 +65,8 @@ public final class SqlExporter {
                 .comparingInt((DiffEngine.Result result) -> -kindOrder(result.key().kind()))
                 .thenComparing(DiffEngine.Result::key);
         List<DiffEngine.Result> ordered = new ArrayList<>(results.size());
-        ordered.addAll(topological(drops, dependencies, false, reverse));
-        ordered.addAll(topological(creates, dependencies, true, normal));
+        ordered.addAll(topological(drops, targetDependencies, false, reverse));
+        ordered.addAll(topological(creates, sourceDependencies, true, normal));
         return List.copyOf(ordered);
     }
 

@@ -90,46 +90,80 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
 
     /** Collects catalog-known dependencies; unsupported metadata views are safely skipped. */
     @Override public Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies() throws SQLException {
+        return dependencyReport().dependencies();
+    }
+
+    /** Reports metadata gaps explicitly instead of presenting partial catalog edges as complete. */
+    @Override public DependencyReport dependencyReport() throws SQLException {
         requireConnection();
         Map<SchemaObject.Key, Set<SchemaObject.Key>> result = new HashMap<>();
-        collectDependencies(result,
+        List<DependencyReport.Coverage> coverage = new ArrayList<>();
+        List<String> limitations = new ArrayList<>();
+        collectDependencies(result, coverage, limitations, "claves foráneas",
                 "SELECT TABLE_NAME, REFERENCED_TABLE_NAME FROM information_schema.KEY_COLUMN_USAGE " +
                         "WHERE TABLE_SCHEMA=? AND REFERENCED_TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME IS NOT NULL",
-                SchemaObject.Kind.TABLE, true);
-        collectDependencies(result,
+                SchemaObject.Kind.TABLE, true, false);
+        collectDependencies(result, coverage, limitations, "vistas",
                 "SELECT usage.VIEW_NAME, usage.TABLE_NAME, objects.TABLE_TYPE FROM information_schema.VIEW_TABLE_USAGE usage " +
                         "LEFT JOIN information_schema.TABLES objects ON objects.TABLE_SCHEMA=usage.TABLE_SCHEMA AND objects.TABLE_NAME=usage.TABLE_NAME " +
                         "WHERE usage.VIEW_SCHEMA=? AND usage.TABLE_SCHEMA=?",
                 SchemaObject.Kind.VIEW, true, true);
-        collectDependencies(result,
+        collectExternalViewDependencies(coverage, limitations);
+        collectDependencies(result, coverage, limitations, "triggers",
                 "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=?",
                 SchemaObject.Kind.TRIGGER, false, false);
+        limitations.add("Las referencias dentro de procedimientos y funciones no se extraen de forma fiable desde los catálogos MySQL/MariaDB.");
+        limitations.add("Las dependencias de vistas visibles requieren privilegios sobre la vista y los objetos referenciados. El recuento puede ser parcial para usuarios con permisos limitados.");
+        limitations.add("Las referencias entre bases se cuentan aparte cuando VIEW_TABLE_USAGE las expone; no se incorporan al orden porque el modelo de exportación trabaja dentro de una sola base.");
+        limitations.add("No se extraen dependencias de procedimientos ni funciones; cero relaciones no demuestra que no existan dependencias.");
         Map<SchemaObject.Key, Set<SchemaObject.Key>> immutable = new HashMap<>();
         result.forEach((key, value) -> immutable.put(key, Set.copyOf(value)));
-        return Map.copyOf(immutable);
+        return new DependencyReport(immutable, coverage, limitations);
     }
 
-    private void collectDependencies(Map<SchemaObject.Key, Set<SchemaObject.Key>> result, String sql,
-                                     SchemaObject.Kind dependentKind, boolean twoParameters) {
-        collectDependencies(result, sql, dependentKind, twoParameters, false);
-    }
-
-    private void collectDependencies(Map<SchemaObject.Key, Set<SchemaObject.Key>> result, String sql,
-                                     SchemaObject.Kind dependentKind, boolean twoParameters, boolean includesDependencyType) {
+    private void collectDependencies(Map<SchemaObject.Key, Set<SchemaObject.Key>> result,
+                                     List<DependencyReport.Coverage> coverage, List<String> limitations,
+                                     String source, String sql, SchemaObject.Kind dependentKind,
+                                     boolean twoParameters, boolean includesDependencyType) {
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, database);
             if (twoParameters) ps.setString(2, database);
+            int edges = 0;
             try (ResultSet rows = ps.executeQuery()) {
                 while (rows.next()) {
-                    SchemaObject.Key dependent = new SchemaObject.Key(dependentKind, rows.getString(1));
+                    String dependentName = rows.getString(1), prerequisiteName = rows.getString(2);
+                    if (dependentName == null || prerequisiteName == null) continue;
+                    SchemaObject.Key dependent = new SchemaObject.Key(dependentKind, dependentName);
                     SchemaObject.Kind prerequisiteKind = includesDependencyType && "VIEW".equalsIgnoreCase(rows.getString(3))
                             ? SchemaObject.Kind.VIEW : SchemaObject.Kind.TABLE;
-                    SchemaObject.Key dependency = new SchemaObject.Key(prerequisiteKind, rows.getString(2));
-                    result.computeIfAbsent(dependent, ignored -> new TreeSet<>()).add(dependency);
+                    SchemaObject.Key dependency = new SchemaObject.Key(prerequisiteKind, prerequisiteName);
+                    if (result.computeIfAbsent(dependent, ignored -> new TreeSet<>()).add(dependency)) edges++;
                 }
             }
-        } catch (SQLException ignored) {
-            // The UI and exporter still work with deterministic kind/name ordering.
+            coverage.add(new DependencyReport.Coverage(source, edges, ""));
+        } catch (SQLException ex) {
+            limitations.add("No se pudieron leer las dependencias de " + source + ": " + safeMessage(ex));
+            coverage.add(new DependencyReport.Coverage(source, 0, "No disponible"));
+        }
+    }
+
+    /** Counts cross-database view references without pretending the exporter can order them. */
+    private void collectExternalViewDependencies(List<DependencyReport.Coverage> coverage,
+                                                List<String> limitations) {
+        String sql = "SELECT COUNT(*) FROM information_schema.VIEW_TABLE_USAGE "
+                + "WHERE VIEW_SCHEMA=? AND TABLE_SCHEMA<>?";
+        try (PreparedStatement query = connection.prepareStatement(sql)) {
+            query.setString(1, database);
+            query.setString(2, database);
+            try (ResultSet rows = query.executeQuery()) {
+                int count = rows.next() ? rows.getInt(1) : 0;
+                coverage.add(new DependencyReport.Coverage("referencias de vistas a otras bases", count,
+                        count == 0 ? "" : "No se usan para ordenar"));
+                if (count > 0) limitations.add("Se detectaron " + count + " referencias de vistas a otras bases; no se usan para ordenar la exportación.");
+            }
+        } catch (SQLException ex) {
+            coverage.add(new DependencyReport.Coverage("referencias de vistas a otras bases", 0, "No disponible"));
+            limitations.add("No se pudieron contar las referencias de vistas a otras bases: " + safeMessage(ex));
         }
     }
 

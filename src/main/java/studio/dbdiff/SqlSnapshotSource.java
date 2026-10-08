@@ -27,6 +27,7 @@ final class SqlSnapshotSource implements SchemaSource {
     private final Path directory;
     private final DatabaseEngine engine;
     private final Map<SchemaObject.Key, SchemaObject> objects = new TreeMap<>();
+    private final Map<SchemaObject.Key, Path> objectFiles = new TreeMap<>();
     private boolean loaded;
 
     SqlSnapshotSource(Path directory, DatabaseEngine engine) {
@@ -64,15 +65,27 @@ final class SqlSnapshotSource implements SchemaSource {
                 String text = Files.readString(script, StandardCharsets.UTF_8).replaceFirst("^\\uFEFF", "");
                 SchemaObject object = parse(script, text);
                 if (object == null) continue;
-                SchemaObject previous = objects.put(object.key(), object);
-                if (previous != null) throw new SQLException("El objeto " + object.key().qualifiedName()
-                        + " aparece en más de un archivo del snapshot. Dejá una sola definición completa por objeto.");
+                Path previousFile = objectFiles.putIfAbsent(object.key(), script);
+                if (previousFile != null) {
+                    String first = directory.relativize(previousFile).toString();
+                    String second = directory.relativize(script).toString();
+                    String detail = isFlywayMigration(previousFile) || isFlywayMigration(script)
+                            ? " Estos nombres parecen migraciones Flyway incrementales; Comparar snapshot requiere una sola definición CREATE completa por objeto y no reproduce migraciones."
+                            : " Dejá una sola definición CREATE completa por objeto.";
+                    throw new SQLException("El objeto " + object.key().qualifiedName() + " aparece en más de un archivo del snapshot: "
+                            + first + " y " + second + "." + detail);
+                }
+                objects.put(object.key(), object);
             } catch (IOException ex) {
                 throw new SQLException("No se pudo leer " + directory.relativize(script) + ".", ex);
             }
         }
         if (objects.isEmpty()) throw new SQLException("No se encontraron definiciones CREATE de tablas, vistas, rutinas o triggers.");
         loaded = true;
+    }
+
+    private static boolean isFlywayMigration(Path path) {
+        return path.getFileName().toString().matches("(?i)(?:V\\d+(?:[._]\\d+)*|U\\d+(?:[._]\\d+)*|R)__.*\\.sql");
     }
 
     private SchemaObject parse(Path path, String text) throws SQLException {

@@ -78,41 +78,89 @@ public final class SqlServerConnector implements DatabaseConnector {
 
     /** Reads foreign-key and SQL-expression references for dependency-aware exports. */
     @Override public Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies() throws SQLException {
+        return dependencyReport().dependencies();
+    }
+
+    /** Makes SQL Server's catalog visibility and unresolved-reference limits visible to export review. */
+    @Override public DependencyReport dependencyReport() throws SQLException {
         requireConnection();
         Map<SchemaObject.Key, Set<SchemaObject.Key>> result = new java.util.HashMap<>();
+        List<DependencyReport.Coverage> coverage = new java.util.ArrayList<>();
+        List<String> limitations = new java.util.ArrayList<>();
         String foreignKeys = "SELECT ps.name, pt.name, rs.name, rt.name FROM sys.foreign_keys fk " +
                 "JOIN sys.tables pt ON pt.object_id=fk.parent_object_id JOIN sys.schemas ps ON ps.schema_id=pt.schema_id " +
                 "JOIN sys.tables rt ON rt.object_id=fk.referenced_object_id JOIN sys.schemas rs ON rs.schema_id=rt.schema_id";
+        int previousEdges = countEdges(result);
         try (Statement query = connection.createStatement(); ResultSet rows = query.executeQuery(foreignKeys)) {
             while (rows.next()) addDependency(result,
                     new SchemaObject.Key(SchemaObject.Kind.TABLE, rows.getString(2), rows.getString(1)),
                     new SchemaObject.Key(SchemaObject.Kind.TABLE, rows.getString(4), rows.getString(3)));
+            coverage.add(new DependencyReport.Coverage("claves foráneas", countEdges(result) - previousEdges, ""));
+        } catch (SQLException ex) {
+            coverage.add(new DependencyReport.Coverage("claves foráneas", 0, "No disponible"));
+            limitations.add("No se pudieron leer las claves foráneas: " + metadataError(ex));
         }
         String triggerParents = "SELECT ts.name, tr.name, ps.name, parent.name FROM sys.triggers tr " +
                 "JOIN sys.objects parent ON parent.object_id=tr.parent_id JOIN sys.schemas ps ON ps.schema_id=parent.schema_id " +
                 "JOIN sys.objects triggerObject ON triggerObject.object_id=tr.object_id JOIN sys.schemas ts ON ts.schema_id=triggerObject.schema_id " +
                 "WHERE tr.parent_class=1 AND tr.is_ms_shipped=0";
+        previousEdges = countEdges(result);
         try (Statement query = connection.createStatement(); ResultSet rows = query.executeQuery(triggerParents)) {
             while (rows.next()) addDependency(result,
                     new SchemaObject.Key(SchemaObject.Kind.TRIGGER, rows.getString(2), rows.getString(1)),
                     new SchemaObject.Key(SchemaObject.Kind.TABLE, rows.getString(4), rows.getString(3)));
+            coverage.add(new DependencyReport.Coverage("triggers", countEdges(result) - previousEdges, ""));
+        } catch (SQLException ex) {
+            coverage.add(new DependencyReport.Coverage("triggers", 0, "No disponible"));
+            limitations.add("No se pudieron leer las dependencias de triggers: " + metadataError(ex));
         }
-        String references = "SELECT ds.name, d.name, d.type, rs.name, r.name, r.type FROM sys.sql_expression_dependencies e " +
+        String references = "SELECT ds.name, d.name, d.type, rs.name, r.name, r.type, e.referenced_server_name, " +
+                "e.referenced_database_name, e.referenced_schema_name, e.referenced_entity_name, e.referenced_id FROM sys.sql_expression_dependencies e " +
                 "JOIN sys.objects d ON d.object_id=e.referencing_id JOIN sys.schemas ds ON ds.schema_id=d.schema_id " +
-                "JOIN sys.objects r ON r.object_id=e.referenced_id JOIN sys.schemas rs ON rs.schema_id=r.schema_id " +
-                "WHERE d.is_ms_shipped=0 AND r.is_ms_shipped=0";
+                "LEFT JOIN sys.objects r ON r.object_id=e.referenced_id LEFT JOIN sys.schemas rs ON rs.schema_id=r.schema_id " +
+                "WHERE d.is_ms_shipped=0 AND (r.object_id IS NULL OR r.is_ms_shipped=0)";
+        previousEdges = countEdges(result);
         try (Statement query = connection.createStatement(); ResultSet rows = query.executeQuery(references)) {
+            int unresolved = 0, unsupported = 0;
             while (rows.next()) {
                 SchemaObject.Kind dependentKind = kind(rows.getString(3));
                 SchemaObject.Kind dependencyKind = kind(rows.getString(6));
-                if (dependentKind != null && dependencyKind != null) addDependency(result,
-                        new SchemaObject.Key(dependentKind, rows.getString(2), rows.getString(1)),
-                        new SchemaObject.Key(dependencyKind, rows.getString(5), rows.getString(4)));
+                if (rows.getObject(11) == null) {
+                    unresolved++;
+                } else if (dependentKind == null || dependencyKind == null) {
+                    unsupported++;
+                } else {
+                    addDependency(result,
+                            new SchemaObject.Key(dependentKind, rows.getString(2), rows.getString(1)),
+                            new SchemaObject.Key(dependencyKind, rows.getString(5), rows.getString(4)));
+                }
             }
+            coverage.add(new DependencyReport.Coverage("referencias SQL visibles", countEdges(result) - previousEdges, ""));
+            if (unresolved > 0) {
+                coverage.add(new DependencyReport.Coverage("referencias no resueltas localmente", unresolved, "No se usan para ordenar"));
+                limitations.add("SQL Server registró " + unresolved + " referencias sin object_id local (por ejemplo, referencias entre bases o servidores); no se usan para ordenar la exportación.");
+            }
+            if (unsupported > 0) {
+                coverage.add(new DependencyReport.Coverage("referencias a tipos no modelados", unsupported, "No se usan para ordenar"));
+                limitations.add("Se omitieron " + unsupported + " referencias SQL cuyo tipo de objeto no está modelado por el exportador.");
+            }
+        } catch (SQLException ex) {
+            coverage.add(new DependencyReport.Coverage("referencias SQL visibles", 0, "No disponible"));
+            limitations.add("No se pudieron leer sys.sql_expression_dependencies: " + metadataError(ex));
         }
+        limitations.add("SQL Server limita los metadatos a los objetos visibles para el usuario. Leer todas las dependencias requiere VIEW DEFINITION y SELECT sobre sys.sql_expression_dependencies; las referencias no resueltas se reportan aparte.");
         Map<SchemaObject.Key, Set<SchemaObject.Key>> immutable = new java.util.HashMap<>();
         result.forEach((key, value) -> immutable.put(key, Set.copyOf(value)));
-        return Map.copyOf(immutable);
+        return new DependencyReport(immutable, coverage, limitations);
+    }
+
+    private static int countEdges(Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies) {
+        return dependencies.values().stream().mapToInt(Set::size).sum();
+    }
+
+    private static String metadataError(SQLException error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? "error SQL " + error.getSQLState() : message.replaceAll("[\\r\\n]+", " ");
     }
 
     private static void addDependency(Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies,
