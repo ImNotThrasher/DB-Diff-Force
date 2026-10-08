@@ -20,13 +20,13 @@ DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB
 - JDK 21 o posterior
 - Apache Maven 3.9 o posterior
 - Acceso a internet en la primera compilación para que Maven descargue las dependencias; después quedan guardadas en la caché local
-- Dos instancias accesibles del mismo motor seleccionado para realizar una comparación
+- Acceso a dos bases de datos del mismo motor; pueden estar en la misma instancia o en instancias distintas
 
 ## Ejecución
 
 En Windows, ejecutá `run.bat`. El script compila el JAR ejecutable y abre la aplicación en una ventana independiente. La terminal vuelve a mostrar el prompt mientras la aplicación queda abierta. En macOS o Linux, ejecutá `./run.sh`; el script compila y abre la aplicación. Para compilar sin abrirla, ejecutá `mvn package`: la aplicación queda en `target/db-diff-force-0.2.0.jar`, con los controladores JDBC en `target/lib`. Maven descarga los controladores y sus dependencias a la caché local. Las credenciales no se guardan allí.
 
-En la ventana de conexión, elegí el motor y completá los datos de cada extremo. Al pulsar **Probar conexión**, se verifica el servidor y se cargan las bases visibles para esa cuenta; después elegí una base de la lista. En esta versión, ambos extremos usan el mismo motor. Los perfiles guardados se pueden elegir por separado para el origen y el destino. Guardan el motor, servidor, puerto, base, usuario y configuración TLS en `~/.db-diff-studio/connections.properties` para conservar los perfiles existentes. Las contraseñas nunca se guardan; hay que ingresarlas en cada sesión. TLS se puede habilitar por conexión.
+En la ventana de conexión, elegí el motor y completá los datos de cada extremo. Origen y destino se conectan por separado, así que pueden apuntar al mismo servidor con dos bases distintas o a servidores diferentes. Al pulsar **Probar conexión**, se verifica el servidor y se cargan las bases visibles para esa cuenta; después elegí una base para cada lado. En esta versión, ambos extremos usan el mismo motor. Los perfiles guardados se pueden elegir por separado para el origen y el destino. Guardan el motor, servidor, puerto, base, usuario y configuración TLS en `~/.db-diff-studio/connections.properties` para conservar los perfiles existentes. Si activás **Recordar contraseña**, se guarda en el almacén seguro del sistema operativo; si no, hay que ingresarla en cada sesión. TLS se puede habilitar por conexión.
 
 Al conectar, la lista de objetos queda marcada como **sin comparar** hasta que se ejecute el análisis. Usá Ctrl+clic o Mayús+clic para seleccionar objetos. **Comparar** analiza los objetos seleccionados; si no seleccionás ninguno, analiza todos los tipos habilitados. Para comparar filas, seleccioná una tabla que ya se haya comparado. **Exportar SQL** solo incluye los resultados seleccionados; si no seleccionaste ninguno, la aplicación te pide que elijas en vez de exportarlo todo.
 
