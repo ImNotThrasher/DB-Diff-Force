@@ -73,7 +73,7 @@ final class DiffCodeEditor extends JPanel {
 
     void setCodeFont(String family, int size) {
         codeFontFamily = installedFamily(family) == null ? AUTO_FONT : family;
-        text.setFont(resolveCodeFont(codeFontFamily, size));
+        text.setFont(codeFont(codeFontFamily, size));
         text.applyLineColors(text.rows(), text.dark);
         gutter.revalidate();
         gutter.repaint();
@@ -108,7 +108,7 @@ final class DiffCodeEditor extends JPanel {
                 .filter(name -> name.equalsIgnoreCase(requested)).findFirst().orElse(null);
     }
 
-    private static Font resolveCodeFont(String requested, int size) {
+    static Font codeFont(String requested, int size) {
         String family = installedFamily(requested);
         if (family == null) {
             family = installedFamily("JetBrains Mono");
@@ -125,7 +125,7 @@ final class DiffCodeEditor extends JPanel {
         DiffTextPane() {
             setEditable(false);
             setOpaque(false);
-            setFont(resolveCodeFont(AUTO_FONT, 13));
+            setFont(codeFont(AUTO_FONT, 13));
             setToolTipText("");
         }
 

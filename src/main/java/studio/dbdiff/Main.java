@@ -190,7 +190,15 @@ public final class Main {
     }
 
     private JComponent statusBar() { JPanel p = new JPanel(new BorderLayout()); p.setBorder(new EmptyBorder(7, 16, 7, 16)); p.setBackground(new Color(247, 249, 252)); p.add(connectionStatus); connectionStatus.setFont(new Font("Segoe UI", Font.PLAIN, 11)); connectionStatus.setForeground(new Color(88, 101, 120)); return p; }
-    private static JTextArea area() { JTextArea area = new JTextArea(); area.setEditable(false); area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12)); area.setBorder(new EmptyBorder(8, 10, 8, 10)); area.setLineWrap(false); return area; }
+    private JTextArea area() {
+        JTextArea area = new JTextArea(); area.setEditable(false);
+        area.setFont(DiffCodeEditor.codeFont(codeFontFamily, codeFontSize));
+        ThemePalette palette = ThemePalette.forMode(AppTheme.isDark(theme));
+        area.setBackground(palette.editor()); area.setForeground(palette.foreground());
+        area.setCaretColor(palette.foreground()); area.setSelectionColor(palette.selection());
+        area.setSelectedTextColor(palette.foreground());
+        area.setBorder(new EmptyBorder(8, 10, 8, 10)); area.setLineWrap(false); return area;
+    }
     private static JButton button(String name, boolean primary) { JButton b = new JButton(name); b.setFont(new Font("Segoe UI", Font.BOLD, 12)); if (primary) { b.setBackground(new Color(61, 117, 207)); b.setForeground(Color.WHITE); b.setFocusPainted(false); } return b; }
 
     private void kindMenu(Component anchor) {
@@ -675,9 +683,15 @@ public final class Main {
         if (chosen.isEmpty()) { JOptionPane.showMessageDialog(frame, "Seleccioná uno o más resultados comparados para exportar. Los objetos no seleccionados no se exportan.", "Elegí resultados para exportar", JOptionPane.INFORMATION_MESSAGE); return; }
         final List<DiffEngine.Result> exportResults = List.copyOf(chosen);
         EnumSet<DiffEngine.Status> ops = EnumSet.of(DiffEngine.Status.CHANGED, DiffEngine.Status.SOURCE_ONLY, DiffEngine.Status.TARGET_ONLY);
-        String sql = SqlExporter.export(chosen, ops, targetDatabase);
-        JTextArea preview = area(); preview.setText(sql); preview.setCaretPosition(0);
+        JTextArea preview = area();
         JCheckBox[] checks = new JCheckBox[3]; JPanel choices = new JPanel(new GridLayout(0, 1));
+        JCheckBox transaction = new JCheckBox("Envolver el script en START TRANSACTION / COMMIT");
+        JCheckBox dropIfExists = new JCheckBox("Usar DROP IF EXISTS al eliminar objetos o reemplazar rutinas");
+        dropIfExists.setToolTipText("Evita errores si un objeto a eliminar o una rutina a reemplazar ya no existe.");
+        Runnable refreshPreview = () -> {
+            preview.setText(SqlExporter.export(exportResults, ops, targetDatabase, transaction.isSelected(), dropIfExists.isSelected()));
+            preview.setCaretPosition(0);
+        };
         DiffEngine.Status[] statuses = {DiffEngine.Status.SOURCE_ONLY, DiffEngine.Status.CHANGED, DiffEngine.Status.TARGET_ONLY};
         String[] labels = {"CREATE: objetos solo en origen", "ALTER / reemplazar: objetos modificados", "DROP: objetos solo en destino"};
         for (int i = 0; i < checks.length; i++) {
@@ -686,12 +700,16 @@ public final class Main {
             final JCheckBox check = checks[i];
             checks[i].addActionListener(e -> {
                 if (check.isSelected()) ops.add(status); else ops.remove(status);
-                preview.setText(SqlExporter.export(exportResults, ops, targetDatabase));
+                refreshPreview.run();
             });
             choices.add(checks[i]);
         }
+        transaction.addActionListener(event -> refreshPreview.run());
+        dropIfExists.addActionListener(event -> refreshPreview.run());
+        choices.add(transaction); choices.add(dropIfExists);
+        refreshPreview.run();
         JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(choices, BorderLayout.NORTH); wrapper.add(new JScrollPane(preview), BorderLayout.CENTER); wrapper.setPreferredSize(new Dimension(720, 500));
-        JLabel warning = new JLabel("Solo se exporta. " + AppInfo.NAME + " nunca ejecuta este SQL. Revisá cada instrucción antes de usarla."); warning.setForeground(new Color(155, 79, 21)); wrapper.add(warning, BorderLayout.SOUTH);
+        JLabel warning = new JLabel("El SQL no se ejecuta desde la aplicación. MariaDB puede confirmar DDL automáticamente, incluso dentro de una transacción."); warning.setForeground(new Color(155, 79, 21)); wrapper.add(warning, BorderLayout.SOUTH);
         int answer = JOptionPane.showConfirmDialog(frame, wrapper, "Revisar exportación SQL", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (answer != JOptionPane.OK_OPTION) return;
         JFileChooser chooser = new JFileChooser(); chooser.setSelectedFile(new java.io.File("db-diff-exportacion.sql")); if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
