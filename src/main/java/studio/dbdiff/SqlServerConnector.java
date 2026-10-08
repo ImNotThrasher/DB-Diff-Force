@@ -57,7 +57,7 @@ public final class SqlServerConnector implements DatabaseConnector {
         requireConnection();
         List<SchemaObject> result = new ArrayList<>();
         String sql = "SELECT s.name, o.name, o.type FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id "
-                + "WHERE o.is_ms_shipped=0 AND o.type IN ('U','V','P','FN','IF','TF','FS','FT') ORDER BY s.name,o.name";
+                + "WHERE o.is_ms_shipped=0 AND o.type IN ('U','V','P','FN','IF','TF','FS','FT','TR') ORDER BY s.name,o.name";
         try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
             while (rows.next()) {
                 SchemaObject.Kind kind = kind(rows.getString(3));
@@ -72,8 +72,52 @@ public final class SqlServerConnector implements DatabaseConnector {
         requireConnection();
         return switch (key.kind()) {
             case TABLE -> loadTable(key);
-            case VIEW, PROCEDURE, FUNCTION -> loadDefinition(key);
+            case VIEW, PROCEDURE, FUNCTION, TRIGGER -> loadDefinition(key);
         };
+    }
+
+    /** Reads foreign-key and SQL-expression references for dependency-aware exports. */
+    @Override public Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies() throws SQLException {
+        requireConnection();
+        Map<SchemaObject.Key, Set<SchemaObject.Key>> result = new java.util.HashMap<>();
+        String foreignKeys = "SELECT ps.name, pt.name, rs.name, rt.name FROM sys.foreign_keys fk " +
+                "JOIN sys.tables pt ON pt.object_id=fk.parent_object_id JOIN sys.schemas ps ON ps.schema_id=pt.schema_id " +
+                "JOIN sys.tables rt ON rt.object_id=fk.referenced_object_id JOIN sys.schemas rs ON rs.schema_id=rt.schema_id";
+        try (Statement query = connection.createStatement(); ResultSet rows = query.executeQuery(foreignKeys)) {
+            while (rows.next()) addDependency(result,
+                    new SchemaObject.Key(SchemaObject.Kind.TABLE, rows.getString(2), rows.getString(1)),
+                    new SchemaObject.Key(SchemaObject.Kind.TABLE, rows.getString(4), rows.getString(3)));
+        }
+        String triggerParents = "SELECT ts.name, tr.name, ps.name, parent.name FROM sys.triggers tr " +
+                "JOIN sys.objects parent ON parent.object_id=tr.parent_id JOIN sys.schemas ps ON ps.schema_id=parent.schema_id " +
+                "JOIN sys.objects triggerObject ON triggerObject.object_id=tr.object_id JOIN sys.schemas ts ON ts.schema_id=triggerObject.schema_id " +
+                "WHERE tr.parent_class=1 AND tr.is_ms_shipped=0";
+        try (Statement query = connection.createStatement(); ResultSet rows = query.executeQuery(triggerParents)) {
+            while (rows.next()) addDependency(result,
+                    new SchemaObject.Key(SchemaObject.Kind.TRIGGER, rows.getString(2), rows.getString(1)),
+                    new SchemaObject.Key(SchemaObject.Kind.TABLE, rows.getString(4), rows.getString(3)));
+        }
+        String references = "SELECT ds.name, d.name, d.type, rs.name, r.name, r.type FROM sys.sql_expression_dependencies e " +
+                "JOIN sys.objects d ON d.object_id=e.referencing_id JOIN sys.schemas ds ON ds.schema_id=d.schema_id " +
+                "JOIN sys.objects r ON r.object_id=e.referenced_id JOIN sys.schemas rs ON rs.schema_id=r.schema_id " +
+                "WHERE d.is_ms_shipped=0 AND r.is_ms_shipped=0";
+        try (Statement query = connection.createStatement(); ResultSet rows = query.executeQuery(references)) {
+            while (rows.next()) {
+                SchemaObject.Kind dependentKind = kind(rows.getString(3));
+                SchemaObject.Kind dependencyKind = kind(rows.getString(6));
+                if (dependentKind != null && dependencyKind != null) addDependency(result,
+                        new SchemaObject.Key(dependentKind, rows.getString(2), rows.getString(1)),
+                        new SchemaObject.Key(dependencyKind, rows.getString(5), rows.getString(4)));
+            }
+        }
+        Map<SchemaObject.Key, Set<SchemaObject.Key>> immutable = new java.util.HashMap<>();
+        result.forEach((key, value) -> immutable.put(key, Set.copyOf(value)));
+        return Map.copyOf(immutable);
+    }
+
+    private static void addDependency(Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies,
+                                      SchemaObject.Key object, SchemaObject.Key prerequisite) {
+        dependencies.computeIfAbsent(object, ignored -> new java.util.TreeSet<>()).add(prerequisite);
     }
 
     private SchemaObject loadDefinition(SchemaObject.Key key) throws SQLException {
@@ -448,7 +492,7 @@ public final class SqlServerConnector implements DatabaseConnector {
     private static boolean isCharacterType(String type) { return Set.of("char", "varchar", "nchar", "nvarchar", "text", "ntext").contains(type.toLowerCase(Locale.ROOT)); }
 
     private static SchemaObject.Kind kind(String type) {
-        return switch (type) { case "U" -> SchemaObject.Kind.TABLE; case "V" -> SchemaObject.Kind.VIEW; case "P" -> SchemaObject.Kind.PROCEDURE; case "FN", "IF", "TF", "FS", "FT" -> SchemaObject.Kind.FUNCTION; default -> null; };
+        return switch (type) { case "U" -> SchemaObject.Kind.TABLE; case "V" -> SchemaObject.Kind.VIEW; case "P" -> SchemaObject.Kind.PROCEDURE; case "FN", "IF", "TF", "FS", "FT" -> SchemaObject.Kind.FUNCTION; case "TR" -> SchemaObject.Kind.TRIGGER; default -> null; };
     }
 
     private SchemaObject unavailableTable(SchemaObject.Key key, String reason) {

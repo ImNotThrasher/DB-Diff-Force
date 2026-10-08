@@ -14,6 +14,7 @@ import java.awt.Graphics;
 /** Central icon choices for the Swing interface. */
 final class UiIcons {
     static final Ikon CONNECT = Material2MZ.STORAGE;
+    static final Ikon SNAPSHOT = Material2MZ.SOURCE;
     static final Ikon COMPARE = Material2AL.COMPARE_ARROWS;
     static final Ikon COMPARE_ROWS = Material2MZ.TABLE_ROWS;
     static final Ikon EXPORT = Material2AL.FILE_UPLOAD;
@@ -24,6 +25,7 @@ final class UiIcons {
     static final Ikon VIEW = Material2MZ.PAGEVIEW;
     static final Ikon PROCEDURE = Material2AL.CODE;
     static final Ikon FUNCTION = Material2AL.FUNCTIONS;
+    static final Ikon TRIGGER = Material2AL.FLASH_ON;
     static final Ikon SETTINGS = Material2MZ.SETTINGS;
     static final Ikon SOURCE_ONLY = Material2AL.ARROW_LEFT;
     static final Ikon TARGET_ONLY = Material2AL.ARROW_RIGHT;

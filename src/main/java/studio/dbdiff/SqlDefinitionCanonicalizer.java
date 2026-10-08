@@ -26,7 +26,25 @@ final class SqlDefinitionCanonicalizer {
             "replace", "returns", "right", "rollback", "row_format", "schema", "security", "select", "set", "signal", "smallint",
             "spatial", "sql", "sqlstate", "sqlwarning", "start", "stored", "table", "then", "time", "timestamp", "tinyblob",
             "tinyint", "tinytext", "true", "truncate", "union", "unique", "unsigned", "update", "use", "using", "values", "varbinary",
-            "varchar", "view", "virtual", "when", "where", "while", "with", "year", "zerofill", "innodb", "myisam", "aria", "memory"
+            "varchar", "view", "virtual", "when", "where", "while", "with", "year", "zerofill", "innodb", "myisam", "aria", "memory",
+            "action", "admin", "analyze", "array", "before", "binlog", "both", "cascaded", "catalog_name",
+            "chain", "change", "channel", "client", "close", "coalesce", "column_format", "columns", "connection",
+            "consistent", "constraint_name", "convert", "cube", "current_role", "current_user", "cursor", "database", "databases",
+            "day", "deallocate", "dec", "delayed", "diagnostics", "disable", "disk", "div", "dynamic", "each", "empty",
+            "enable", "event", "events", "exception", "exclusive", "exit", "explain", "export", "extended", "extract", "fields",
+            "first", "flush", "following", "force", "format", "found", "full", "general", "geometry", "get", "grant", "grants",
+            "handler", "high_priority", "history", "hour", "ignore", "infile", "inout", "install", "instant", "interval",
+            "invisible", "invoker", "isolation", "json_table", "keys", "kill", "last", "lateral", "leading", "less", "level",
+            "linear", "lines", "load", "localtime", "localtimestamp", "lock", "locks", "logs", "low_priority", "master", "maxvalue",
+            "merge", "minute", "mode", "month", "names", "national", "natural", "nchar", "never", "no", "nowait", "of", "offset",
+            "only", "open", "optimize", "option", "outfile", "over", "owner", "package", "page", "partition", "partitions",
+            "password", "plugin", "plugins", "prepare", "preserve", "privileges", "purge", "query", "quick", "recursive", "redo",
+            "remove", "reorganize", "repair", "replication", "require", "reset", "restrict", "resume", "returning",
+            "role", "roles", "row", "rows", "savepoint", "schemas", "second", "server", "session", "share", "shutdown", "signed",
+            "skip", "slave", "snapshot", "specific", "sql_big_result", "sql_buffer_result", "sql_calc_found_rows", "sql_small_result",
+            "sql_warnings", "stats", "status", "stop", "storage", "straight_join", "system", "tables", "temporary", "terminated",
+            "ties", "trailing", "transaction", "trigger", "undo", "uninstall", "undefined", "usage", "user", "utc_date", "utc_time", "utc_timestamp",
+            "value", "varying", "wait", "warning", "week", "window", "without", "work", "write", "x509", "xa"
     );
     private static final Set<String> SQL_SERVER_KEYWORDS = Set.of(
             "create", "alter", "procedure", "proc", "function", "view", "table", "as", "begin", "end", "return", "returns",
@@ -37,7 +55,15 @@ final class SqlDefinitionCanonicalizer {
             "clustered", "nonclustered", "index", "include", "check", "collate", "asc", "desc", "go", "varchar", "nvarchar",
             "char", "nchar", "int", "bigint", "smallint", "tinyint", "decimal", "numeric", "datetime", "datetime2", "bit", "float",
             "real", "xml", "text", "ntext", "image", "max", "nulls", "offset", "fetch", "next", "throw", "try", "catch", "if",
-            "while", "cursor", "open", "close", "deallocate", "nocount"
+            "while", "cursor", "open", "close", "deallocate", "nocount",
+            "add", "any", "authorization", "backup", "break", "browse", "bulk", "checkpoint", "compute", "contains", "continue",
+            "current", "current_date", "current_time", "current_timestamp", "current_user", "database", "dbcc", "deny", "disk",
+            "distributed", "dump", "errlvl", "except", "external", "file", "fillfactor", "freetext", "goto", "grant", "holdlock",
+            "identity_insert", "identitycol", "kill", "lineno", "load", "national", "nocheck", "nullif", "off", "offsets", "opendatasource",
+            "openquery", "openrowset", "openxml", "option", "percent", "pivot", "plan", "print", "public", "raiserror", "readtext",
+            "reconfigure", "restore", "rowcount", "rowguidcol", "rule", "save", "securityaudit", "session_user", "setuser", "shutdown",
+            "some", "statistics", "system_user", "tablesample", "textsize", "tran", "tsequal", "unpivot", "updatetext",
+            "waitfor", "writetext"
     );
 
     private SqlDefinitionCanonicalizer() { }

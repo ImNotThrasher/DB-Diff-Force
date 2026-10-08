@@ -23,9 +23,75 @@ public final class SqlExporter {
     public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
                                 String targetDatabase, boolean transaction, boolean dropIfExists,
                                 Strategy strategy, DatabaseEngine engine) {
+        return export(results, operations, targetDatabase, transaction, dropIfExists, strategy, engine, Map.of());
+    }
+    public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
+                                String targetDatabase, boolean transaction, boolean dropIfExists,
+                                Strategy strategy, DatabaseEngine engine,
+                                Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies) {
+        List<DiffEngine.Result> ordered = orderByDependencies(results, operations, dependencies);
         return engine == DatabaseEngine.SQLSERVER
-                ? exportSqlServer(results, operations, targetDatabase, transaction, dropIfExists, strategy)
-                : exportMySqlFamily(results, operations, targetDatabase, transaction, dropIfExists, strategy, engine);
+                ? exportSqlServer(ordered, operations, targetDatabase, transaction, dropIfExists, strategy)
+                : exportMySqlFamily(ordered, operations, targetDatabase, transaction, dropIfExists, strategy, engine);
+    }
+
+    /** Creates prerequisites first and drops dependents first, with stable type/name order for ties. */
+    private static List<DiffEngine.Result> orderByDependencies(List<DiffEngine.Result> results,
+            Set<DiffEngine.Status> operations, Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies) {
+        List<DiffEngine.Result> drops = new ArrayList<>(), creates = new ArrayList<>();
+        for (DiffEngine.Result result : results) {
+            if (!operations.contains(result.status()) || result.status() == DiffEngine.Status.IDENTICAL) continue;
+            (result.status() == DiffEngine.Status.TARGET_ONLY ? drops : creates).add(result);
+        }
+        Comparator<DiffEngine.Result> normal = Comparator
+                .comparingInt((DiffEngine.Result result) -> kindOrder(result.key().kind()))
+                .thenComparing(DiffEngine.Result::key);
+        Comparator<DiffEngine.Result> reverse = Comparator
+                .comparingInt((DiffEngine.Result result) -> -kindOrder(result.key().kind()))
+                .thenComparing(DiffEngine.Result::key);
+        List<DiffEngine.Result> ordered = new ArrayList<>(results.size());
+        ordered.addAll(topological(drops, dependencies, false, reverse));
+        ordered.addAll(topological(creates, dependencies, true, normal));
+        return List.copyOf(ordered);
+    }
+
+    private static List<DiffEngine.Result> topological(List<DiffEngine.Result> values,
+            Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies, boolean prerequisitesFirst,
+            Comparator<DiffEngine.Result> tieBreak) {
+        Map<SchemaObject.Key, DiffEngine.Result> byKey = new HashMap<>();
+        values.forEach(value -> byKey.put(value.key(), value));
+        Map<SchemaObject.Key, Integer> incoming = new HashMap<>();
+        Map<SchemaObject.Key, Set<SchemaObject.Key>> next = new HashMap<>();
+        byKey.keySet().forEach(key -> incoming.put(key, 0));
+        dependencies.forEach((object, prerequisites) -> {
+            if (!byKey.containsKey(object)) return;
+            for (SchemaObject.Key prerequisite : prerequisites) {
+                if (!byKey.containsKey(prerequisite) || object.equals(prerequisite)) continue;
+                SchemaObject.Key from = prerequisitesFirst ? prerequisite : object;
+                SchemaObject.Key to = prerequisitesFirst ? object : prerequisite;
+                if (next.computeIfAbsent(from, ignored -> new HashSet<>()).add(to))
+                    incoming.compute(to, (ignored, count) -> count + 1);
+            }
+        });
+        PriorityQueue<SchemaObject.Key> ready = new PriorityQueue<>((left, right) -> tieBreak.compare(byKey.get(left), byKey.get(right)));
+        incoming.forEach((key, count) -> { if (count == 0) ready.add(key); });
+        List<DiffEngine.Result> output = new ArrayList<>(values.size());
+        while (!ready.isEmpty()) {
+            SchemaObject.Key key = ready.remove(); output.add(byKey.get(key));
+            for (SchemaObject.Key dependent : next.getOrDefault(key, Set.of())) {
+                int remaining = incoming.compute(dependent, (ignored, count) -> count - 1);
+                if (remaining == 0) ready.add(dependent);
+            }
+        }
+        if (output.size() != values.size()) {
+            Set<SchemaObject.Key> emitted = new HashSet<>(); output.forEach(value -> emitted.add(value.key()));
+            values.stream().filter(value -> !emitted.contains(value.key())).sorted(tieBreak).forEach(output::add);
+        }
+        return output;
+    }
+
+    private static int kindOrder(SchemaObject.Kind kind) {
+        return switch (kind) { case TABLE -> 0; case VIEW -> 1; case FUNCTION -> 2; case PROCEDURE -> 3; case TRIGGER -> 4; };
     }
 
     private static String exportSqlServer(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
@@ -90,6 +156,7 @@ public final class SqlExporter {
             case VIEW -> "VIEW";
             case PROCEDURE -> "PROCEDURE";
             case FUNCTION -> "FUNCTION";
+            case TRIGGER -> "TRIGGER";
         };
         return "DROP " + type + (ifExists ? " IF EXISTS " : " ") + tsqlQuote(key.schema().isBlank() ? "dbo" : key.schema())
                 + "." + tsqlQuote(key.name()) + ";";
@@ -129,6 +196,7 @@ public final class SqlExporter {
             case PROCEDURE, FUNCTION -> strategy == Strategy.CREATE_OR_REPLACE && engine == DatabaseEngine.MARIADB
                     ? routineCreate(statementWithReplace(object.definition(), true))
                     : routineReplace(object.key(), object.definition(), dropIfExists);
+            case TRIGGER -> routineReplace(object.key(), object.definition(), dropIfExists);
         };
     }
     private static String changedTableSql(DiffEngine.Result result, String database, Strategy strategy, DatabaseEngine engine) {
@@ -150,6 +218,7 @@ public final class SqlExporter {
             case VIEW -> statementWithReplace(object.definition(), useReplace) + ";";
             case PROCEDURE, FUNCTION -> routineCreate(statementWithReplace(object.definition(), useReplace));
             case TABLE -> engine == DatabaseEngine.MARIADB ? statementWithReplace(object.definition(), useReplace) + ";" : object.definition() + ";";
+            case TRIGGER -> routineCreate(object.definition());
         };
     }
     private static String statementWithReplace(String ddl, boolean replace) {
@@ -157,7 +226,7 @@ public final class SqlExporter {
         return replace ? normalized.replaceFirst("(?i)^\\s*CREATE\\s+", "CREATE OR REPLACE ") : normalized;
     }
     private static String routineReplace(SchemaObject.Key key, String ddl, boolean dropIfExists) {
-        return "DROP " + (key.kind() == SchemaObject.Kind.PROCEDURE ? "PROCEDURE" : "FUNCTION")
+        return "DROP " + mysqlObjectType(key.kind())
                 + (dropIfExists ? " IF EXISTS " : " ") + mysqlQuote(key.qualifiedName()) + ";\n" + routineCreate(ddl);
     }
     private static String routineCreate(String ddl) { return "DELIMITER //\n" + ddl + " //\nDELIMITER ;"; }
@@ -176,7 +245,11 @@ public final class SqlExporter {
             case VIEW -> "DROP VIEW" + conditional + " " + name + ";";
             case PROCEDURE -> "DROP PROCEDURE" + conditional + " " + name + ";";
             case FUNCTION -> "DROP FUNCTION" + conditional + " " + name + ";";
+            case TRIGGER -> "DROP TRIGGER" + conditional + " " + name + ";";
         };
+    }
+    private static String mysqlObjectType(SchemaObject.Kind kind) {
+        return switch (kind) { case PROCEDURE -> "PROCEDURE"; case FUNCTION -> "FUNCTION"; case TRIGGER -> "TRIGGER"; default -> throw new IllegalArgumentException("Not a routine-like object: " + kind); };
     }
     private static String ensureTerminator(String ddl) { return ddl.stripTrailing().endsWith(";") ? ddl.stripTrailing() : ddl.stripTrailing() + ";"; }
     private static String tsqlQuote(String id) { return "[" + id.replace("]", "]]" ) + "]"; }

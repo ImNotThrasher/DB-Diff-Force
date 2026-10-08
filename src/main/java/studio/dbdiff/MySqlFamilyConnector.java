@@ -67,6 +67,13 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
                 }
             }
         }
+        String triggers = "SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=? ORDER BY TRIGGER_NAME";
+        try (PreparedStatement ps = connection.prepareStatement(triggers)) {
+            ps.setString(1, database);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) result.add(new SchemaObject(new SchemaObject.Key(SchemaObject.Kind.TRIGGER, rs.getString(1)), "", ""));
+            }
+        }
         result.sort(Comparator.comparing(SchemaObject::key));
         return result;
     }
@@ -77,7 +84,53 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
             case TABLE -> loadTable(key);
             case VIEW -> loadView(key);
             case PROCEDURE, FUNCTION -> loadRoutine(key);
+            case TRIGGER -> loadTrigger(key);
         };
+    }
+
+    /** Collects catalog-known dependencies; unsupported metadata views are safely skipped. */
+    @Override public Map<SchemaObject.Key, Set<SchemaObject.Key>> dependencies() throws SQLException {
+        requireConnection();
+        Map<SchemaObject.Key, Set<SchemaObject.Key>> result = new HashMap<>();
+        collectDependencies(result,
+                "SELECT TABLE_NAME, REFERENCED_TABLE_NAME FROM information_schema.KEY_COLUMN_USAGE " +
+                        "WHERE TABLE_SCHEMA=? AND REFERENCED_TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME IS NOT NULL",
+                SchemaObject.Kind.TABLE, true);
+        collectDependencies(result,
+                "SELECT usage.VIEW_NAME, usage.TABLE_NAME, objects.TABLE_TYPE FROM information_schema.VIEW_TABLE_USAGE usage " +
+                        "LEFT JOIN information_schema.TABLES objects ON objects.TABLE_SCHEMA=usage.TABLE_SCHEMA AND objects.TABLE_NAME=usage.TABLE_NAME " +
+                        "WHERE usage.VIEW_SCHEMA=? AND usage.TABLE_SCHEMA=?",
+                SchemaObject.Kind.VIEW, true, true);
+        collectDependencies(result,
+                "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=?",
+                SchemaObject.Kind.TRIGGER, false, false);
+        Map<SchemaObject.Key, Set<SchemaObject.Key>> immutable = new HashMap<>();
+        result.forEach((key, value) -> immutable.put(key, Set.copyOf(value)));
+        return Map.copyOf(immutable);
+    }
+
+    private void collectDependencies(Map<SchemaObject.Key, Set<SchemaObject.Key>> result, String sql,
+                                     SchemaObject.Kind dependentKind, boolean twoParameters) {
+        collectDependencies(result, sql, dependentKind, twoParameters, false);
+    }
+
+    private void collectDependencies(Map<SchemaObject.Key, Set<SchemaObject.Key>> result, String sql,
+                                     SchemaObject.Kind dependentKind, boolean twoParameters, boolean includesDependencyType) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, database);
+            if (twoParameters) ps.setString(2, database);
+            try (ResultSet rows = ps.executeQuery()) {
+                while (rows.next()) {
+                    SchemaObject.Key dependent = new SchemaObject.Key(dependentKind, rows.getString(1));
+                    SchemaObject.Kind prerequisiteKind = includesDependencyType && "VIEW".equalsIgnoreCase(rows.getString(3))
+                            ? SchemaObject.Kind.VIEW : SchemaObject.Kind.TABLE;
+                    SchemaObject.Key dependency = new SchemaObject.Key(prerequisiteKind, rows.getString(2));
+                    result.computeIfAbsent(dependent, ignored -> new TreeSet<>()).add(dependency);
+                }
+            }
+        } catch (SQLException ignored) {
+            // The UI and exporter still work with deterministic kind/name ordering.
+        }
     }
 
     private SchemaObject loadTable(SchemaObject.Key key) throws SQLException {
@@ -248,9 +301,19 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         catch (SQLException ex) { String definition = "-- " + AppInfo.NAME + ": SHOW CREATE " + key.kind() + " unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, signature(definition, false)); }
     }
 
+    private SchemaObject loadTrigger(SchemaObject.Key key) throws SQLException {
+        try {
+            String definition = showCreate(key, 3);
+            return new SchemaObject(key, definition, signature(definition, false));
+        } catch (SQLException ex) {
+            String definition = "-- " + AppInfo.NAME + ": SHOW CREATE TRIGGER unavailable (" + safeMessage(ex) + ")";
+            return new SchemaObject(key, definition, signature(definition, false));
+        }
+    }
+
     private String showCreate(SchemaObject.Key key, int ddlColumn) throws SQLException {
         String command = switch (key.kind()) {
-            case TABLE -> "TABLE"; case VIEW -> "VIEW"; case PROCEDURE -> "PROCEDURE"; case FUNCTION -> "FUNCTION";
+            case TABLE -> "TABLE"; case VIEW -> "VIEW"; case PROCEDURE -> "PROCEDURE"; case FUNCTION -> "FUNCTION"; case TRIGGER -> "TRIGGER";
         };
         String sql = "SHOW CREATE " + command + " " + quote(database) + "." + quote(key.name());
         try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(sql)) {

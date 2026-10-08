@@ -90,10 +90,12 @@ public final class Main {
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final JProgressBar activityIndicator = new JProgressBar();
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
-    private DatabaseConnector source, target;
+    private SchemaSource source;
+    private DatabaseConnector target;
     private DatabaseEngine schemaEngine = DatabaseEngine.MARIADB;
     private String sourceDatabase = "", targetDatabase = "";
     private List<SchemaObject> sourceObjects = List.of(), targetObjects = List.of();
+    private Map<SchemaObject.Key, Set<SchemaObject.Key>> sourceDependencies = Map.of(), targetDependencies = Map.of();
     private boolean compared;
     private boolean schemaComparisonRunning;
     private boolean stackedLayout;
@@ -104,7 +106,7 @@ public final class Main {
     private JSplitPane workspaceSplit;
     private JSplitPane comparisonSplit;
     private JButton layoutButton;
-    private JButton compareButton, exportButton;
+    private JButton compareButton, exportButton, snapshotButton;
     private final Set<SchemaObject.Key> comparedKeys = new TreeSet<>();
     private final Set<SchemaObject.Key> loadedSourceKeys = ConcurrentHashMap.newKeySet();
     private final Set<SchemaObject.Key> loadedTargetKeys = ConcurrentHashMap.newKeySet();
@@ -147,11 +149,12 @@ public final class Main {
         brand.add(logo, BorderLayout.WEST); brand.add(brandText, BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4)); actions.setOpaque(false);
         JButton connect = button("Conectar bases", true); connect.setIcon(UiIcons.themed(UiIcons.CONNECT, 16)); connect.setIconTextGap(7); connect.putClientProperty("dbdiff.primary", Boolean.TRUE); connect.addActionListener(e -> connect());
+        snapshotButton = button("Comparar snapshot", false); snapshotButton.setIcon(UiIcons.themed(UiIcons.SNAPSHOT, 16)); snapshotButton.setIconTextGap(6); snapshotButton.setToolTipText("Usar definiciones SQL completas de una carpeta como origen"); snapshotButton.addActionListener(e -> openSnapshot());
         compareButton = button("Comparar", false); compareButton.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compareButton.setIconTextGap(7); compareButton.addActionListener(e -> compare());
         exportButton = button("Exportar SQL", false); exportButton.setIcon(UiIcons.themed(UiIcons.EXPORT, 16)); exportButton.setIconTextGap(7); exportButton.addActionListener(e -> export());
         JButton settings = button("Configuración", false); settings.setIcon(UiIcons.themed(UiIcons.SETTINGS, 16)); settings.setIconTextGap(6);
         settings.setToolTipText("Tema y fuente del comparador"); settings.addActionListener(e -> showSettings());
-        actions.add(connect); actions.add(compareButton); actions.add(exportButton); actions.add(settings); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
+        actions.add(connect); actions.add(snapshotButton); actions.add(compareButton); actions.add(exportButton); actions.add(settings); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
     }
 
     private JComponent content() {
@@ -238,9 +241,55 @@ public final class Main {
             try {
                 a.connect(endpoints[0]); b.connect(endpoints[1]);
                 List<SchemaObject> ao = a.listObjects(), bo = b.listObjects();
-                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; schemaEngine = endpoints[0].engine(); setConnectionAvailable(true); sourceDatabase = endpoints[0].database(); targetDatabase = endpoints[1].database(); comparisonView.setDatabases(sourceDatabase, targetDatabase); sourceObjects = ao; targetObjects = bo; loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null; compared = false; comparedKeys.clear(); showCatalog(); setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos encontrados · seleccioná un objeto para cargar su definición"); });
+                Map<SchemaObject.Key, Set<SchemaObject.Key>> ad = safeDependencies(a), bd = safeDependencies(b);
+                SwingUtilities.invokeLater(() -> { closeConnectors(); source = a; target = b; sourceDependencies = ad; targetDependencies = bd; schemaEngine = endpoints[0].engine(); setConnectionAvailable(true); sourceDatabase = endpoints[0].database(); targetDatabase = endpoints[1].database(); comparisonView.setDatabases(sourceDatabase, targetDatabase); sourceObjects = ao; targetObjects = bo; loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null; compared = false; comparedKeys.clear(); showCatalog(); setBusy(false, "Conectado · Origen: " + sourceDatabase + " · Destino: " + targetDatabase + " · " + ao.size() + " / " + bo.size() + " objetos encontrados · seleccioná un objeto para cargar su definición"); });
             } catch (SQLException | RuntimeException ex) { a.close(); b.close(); SwingUtilities.invokeLater(() -> { setBusy(false, "Error de conexión"); error("No se pudo conectar", ex); }); }
             finally { endpoints[0].clearPassword(); endpoints[1].clearPassword(); }
+        });
+    }
+
+    private static Map<SchemaObject.Key, Set<SchemaObject.Key>> safeDependencies(SchemaSource connector) {
+        try { return connector.dependencies(); } catch (SQLException ignored) { return Map.of(); }
+    }
+
+    /** Replaces the source database with a read-only folder of complete SQL definitions. */
+    private void openSnapshot() {
+        if (target == null) {
+            JOptionPane.showMessageDialog(frame, "Conectá las bases primero; el destino debe ser una base de datos.",
+                    "Falta la base destino", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Seleccionar carpeta de snapshot SQL");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        chooser.setAcceptAllFileFilterUsed(false);
+        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+        Path folder = chooser.getSelectedFile().toPath();
+        long request = ++comparisonRequest;
+        selectionRequest++; rowComparisonRequest++;
+        setBusy(true, "Leyendo definiciones del snapshot…");
+        worker.submit(() -> {
+            SqlSnapshotSource snapshot = new SqlSnapshotSource(folder, schemaEngine);
+            try {
+                List<SchemaObject> catalog = snapshot.listObjects();
+                SwingUtilities.invokeLater(() -> {
+                    if (request != comparisonRequest) { snapshot.close(); return; }
+                    if (source != null) source.close();
+                    source = snapshot; sourceDependencies = Map.of(); sourceObjects = catalog;
+                    sourceDatabase = "Snapshot: " + (folder.getFileName() == null ? folder : folder.getFileName());
+                    comparisonView.setDatabases(sourceDatabase, targetDatabase);
+                    loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
+                    compared = false; comparedKeys.clear(); rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
+                    showCatalog(); setConnectionAvailable(true);
+                    setBusy(false, "Snapshot cargado · " + catalog.size() + " definiciones · destino: " + targetDatabase);
+                });
+            } catch (SQLException | RuntimeException ex) {
+                snapshot.close();
+                SwingUtilities.invokeLater(() -> {
+                    if (request != comparisonRequest) return;
+                    setBusy(false, "No se pudo leer el snapshot"); error("Error al cargar la carpeta SQL", ex);
+                });
+            }
         });
     }
 
@@ -253,7 +302,7 @@ public final class Main {
         Set<SchemaObject.Kind> kinds = Set.copyOf(selectedKinds);
         Set<SchemaObject.Key> loadedA = Set.copyOf(loadedSourceKeys), loadedB = Set.copyOf(loadedTargetKeys);
         List<SchemaObject> sourceCatalog = sourceObjects, targetCatalog = targetObjects;
-        DatabaseConnector sourceConnector = source, targetConnector = target;
+        SchemaSource sourceConnector = source; DatabaseConnector targetConnector = target;
         schemaComparisonRunning = true;
         setBusy(true, "Comparando los tipos de objetos seleccionados…");
         // Las lecturas JDBC y el diff corren fuera del EDT. El contador invalida
@@ -276,7 +325,7 @@ public final class Main {
         });
     }
 
-    private static List<SchemaObject> loadSelected(DatabaseConnector connector, List<SchemaObject> catalog, Set<SchemaObject.Kind> kinds,
+    private static List<SchemaObject> loadSelected(SchemaSource connector, List<SchemaObject> catalog, Set<SchemaObject.Kind> kinds,
                                                    Set<SchemaObject.Key> selected, Set<SchemaObject.Key> cachedKeys) throws SQLException {
         // El catálogo solo trae nombres; las definiciones se cargan bajo demanda y
         // las ya leídas se reutilizan para evitar consultas repetidas al servidor.
@@ -504,7 +553,11 @@ public final class Main {
             return;
         }
         long request = ++rowComparisonRequest;
-        DatabaseConnector sourceConnector = source, targetConnector = target;
+        if (!(source instanceof DatabaseConnector sourceConnector)) {
+            rowComparisonPanel.showMessage("La comparación de filas requiere dos bases conectadas; el snapshot solo contiene definiciones SQL.");
+            return;
+        }
+        DatabaseConnector targetConnector = target;
         rowComparisonPanel.showLoading(selected.key().qualifiedName());
         setBusy(true, "Leyendo las filas de " + selected.key().qualifiedName() + "…");
         // Consultar en el worker evita bloquear Swing; el token descarta respuestas
@@ -553,7 +606,7 @@ public final class Main {
         else if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("La comparación de filas está disponible para tablas.");
         comparisonView.showMessage("Cargando y comparando la definición de " + key.qualifiedName() + "…");
         connectionStatus.setText("Leyendo definición de " + key.qualifiedName() + " en segundo plano…");
-        DatabaseConnector sourceConnector = source, targetConnector = target;
+        SchemaSource sourceConnector = source; DatabaseConnector targetConnector = target;
         // Se carga el DDL al seleccionar el objeto y se conserva en caché aunque
         // la selección cambie durante la consulta.
         worker.submit(() -> {
@@ -755,7 +808,8 @@ public final class Main {
                 case 2 -> sqlServerExport ? SqlExporter.Strategy.CREATE_OR_ALTER : SqlExporter.Strategy.CREATE_OR_REPLACE;
                 default -> SqlExporter.Strategy.ALTER;
             };
-            preview.setText(SqlExporter.export(exportResults, ops, targetDatabase, transaction.isSelected(), dropIfExists.isSelected(), strategy, schemaEngine));
+            preview.setText(SqlExporter.export(exportResults, ops, targetDatabase, transaction.isSelected(), dropIfExists.isSelected(), strategy, schemaEngine,
+                    mergeDependencies(sourceDependencies, targetDependencies)));
             preview.setCaretPosition(0);
             preview.setBackground(ThemePalette.forMode(AppTheme.isDark(theme)).editor());
             preview.setForeground(ThemePalette.forMode(AppTheme.isDark(theme)).foreground());
@@ -836,6 +890,8 @@ public final class Main {
         if (workspaceSplit != null) setEnabledRecursively(workspaceSplit.getRightComponent(), available);
         if (compareButton != null) compareButton.setEnabled(available);
         if (exportButton != null) exportButton.setEnabled(available);
+        if (snapshotButton != null) snapshotButton.setEnabled(available);
+        if (rowComparisonPanel != null) setEnabledRecursively(rowComparisonPanel, available && source instanceof DatabaseConnector);
     }
 
     private static void setEnabledRecursively(Component component, boolean enabled) {
@@ -846,7 +902,16 @@ public final class Main {
 
     private static long countChanged(List<DiffEngine.Result> values) { return values.stream().filter(r -> r.status() != DiffEngine.Status.IDENTICAL).count(); }
     private void error(String title, Exception ex) { JOptionPane.showMessageDialog(frame, ex.getMessage() == null ? ex.toString() : ex.getMessage(), title, JOptionPane.ERROR_MESSAGE); }
-    private void closeConnectors() { if (source != null) source.close(); if (target != null) target.close(); source = target = null; }
+    private static Map<SchemaObject.Key, Set<SchemaObject.Key>> mergeDependencies(
+            Map<SchemaObject.Key, Set<SchemaObject.Key>> left, Map<SchemaObject.Key, Set<SchemaObject.Key>> right) {
+        Map<SchemaObject.Key, Set<SchemaObject.Key>> merged = new TreeMap<>();
+        left.forEach((key, value) -> merged.computeIfAbsent(key, ignored -> new TreeSet<>()).addAll(value));
+        right.forEach((key, value) -> merged.computeIfAbsent(key, ignored -> new TreeSet<>()).addAll(value));
+        Map<SchemaObject.Key, Set<SchemaObject.Key>> result = new TreeMap<>();
+        merged.forEach((key, value) -> result.put(key, Set.copyOf(value)));
+        return Map.copyOf(result);
+    }
+    private void closeConnectors() { if (source != null) source.close(); if (target != null) target.close(); source = target = null; sourceDependencies = targetDependencies = Map.of(); }
     private void close() { closeConnectors(); worker.shutdownNow(); frame.dispose(); }
 
     private void updateLayout() {
@@ -985,6 +1050,7 @@ public final class Main {
                 case VIEW -> UiIcons.themed(UiIcons.VIEW, 14);
                 case PROCEDURE -> UiIcons.themed(UiIcons.PROCEDURE, 14);
                 case FUNCTION -> UiIcons.themed(UiIcons.FUNCTION, 14);
+                case TRIGGER -> UiIcons.themed(UiIcons.TRIGGER, 14);
             });
             type.setIconTextGap(4);
             return this;
@@ -1045,7 +1111,7 @@ public final class Main {
     }
 
     private static String kindName(SchemaObject.Kind kind) {
-        return switch (kind) { case TABLE -> "tabla"; case VIEW -> "vista"; case PROCEDURE -> "procedimiento"; case FUNCTION -> "función"; };
+        return switch (kind) { case TABLE -> "tabla"; case VIEW -> "vista"; case PROCEDURE -> "procedimiento"; case FUNCTION -> "función"; case TRIGGER -> "trigger"; };
     }
 
 }

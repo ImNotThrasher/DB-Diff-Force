@@ -4,11 +4,36 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class SqlDefinitionCanonicalizerTest {
+    @Test
+    void representativeServerDdlFixturesIgnoreKeywordCaseAndFormatting() throws IOException {
+        String mariaTable = fixture("mariadb-show-create-table.sql");
+        String mariaFormatted = mariaTable.replace("CREATE TABLE", "create\ttable")
+                .replace("NOT NULL", "not\nnull").replace("AUTO_INCREMENT", "auto_increment")
+                .replace("ENGINE=InnoDB", "engine = innodb").replace("DEFAULT CHARSET", "default charset");
+        assertEquals(mysql(mariaTable, true), mysql(mariaFormatted, true), "MariaDB SHOW CREATE TABLE fixture");
+
+        String mysqlView = fixture("mysql-show-create-view.sql");
+        String mysqlFormatted = mysqlView.replace("CREATE ALGORITHM=UNDEFINED", "create algorithm = undefined")
+                .replace("SQL SECURITY DEFINER VIEW", "sql security definer view")
+                .replace(" AS\nselect", " as\nSELECT").replace("from ", "FROM ").replace(" where ", " WHERE ");
+        assertEquals(mysql(mysqlView, false), mysql(mysqlFormatted, false), "MySQL SHOW CREATE VIEW fixture");
+
+        String sqlServerProcedure = fixture("sqlserver-object-definition-procedure.sql");
+        String sqlServerFormatted = sqlServerProcedure.replace("CREATE PROCEDURE", "create procedure")
+                .replace("AS\nBEGIN", "as\nbegin").replace("SET NOCOUNT ON", "set nocount on")
+                .replace("SELECT ", "select ").replace("FROM ", "from ").replace("WHERE ", "where ")
+                .replace(" AND ", " and ");
+        assertEquals(sqlServer(sqlServerProcedure), sqlServer(sqlServerFormatted), "SQL Server OBJECT_DEFINITION fixture");
+    }
+
     @Test
     void mysqlFormattingAndKeywordCaseDoNotChangeSignature() {
         assertSameMysql("CREATE TABLE `items` (`id` INT NOT NULL DEFAULT 1) ENGINE=InnoDB",
@@ -96,5 +121,12 @@ class SqlDefinitionCanonicalizerTest {
 
     private static String sqlServer(String sql) {
         return SqlDefinitionCanonicalizer.signature(sql, SqlDefinitionCanonicalizer.Dialect.SQL_SERVER, false);
+    }
+
+    private static String fixture(String name) throws IOException {
+        try (InputStream input = SqlDefinitionCanonicalizerTest.class.getResourceAsStream("/ddl/" + name)) {
+            if (input == null) throw new IOException("Missing DDL fixture: " + name);
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 }

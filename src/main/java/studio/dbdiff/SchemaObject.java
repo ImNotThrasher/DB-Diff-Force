@@ -3,7 +3,7 @@ package studio.dbdiff;
 import java.util.Objects;
 
 public record SchemaObject(Key key, String definition, String signature) {
-    public enum Kind { TABLE, VIEW, PROCEDURE, FUNCTION }
+    public enum Kind { TABLE, VIEW, PROCEDURE, FUNCTION, TRIGGER }
     public record Key(Kind kind, String name, String schema) implements Comparable<Key> {
         public Key(Kind kind, String name) { this(kind, name, ""); }
         public Key { Objects.requireNonNull(kind); Objects.requireNonNull(name); schema = schema == null ? "" : schema; }
