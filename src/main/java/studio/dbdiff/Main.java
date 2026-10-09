@@ -287,7 +287,8 @@ public final class Main {
                     loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
                     compared = false; comparedKeys.clear(); rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
                     showCatalog(); setConnectionAvailable(true); refreshDependencyStatus();
-                    compare(false);
+                    if (chooseInitialObjectKinds()) compare(false);
+                    else setBusy(false, "Catálogo listo · elegí los tipos y pulsá Actualizar para comparar");
                 });
             } catch (SQLException | RuntimeException ex) {
                 SwingUtilities.invokeLater(() -> {
@@ -443,7 +444,7 @@ public final class Main {
         activityIndicator.setStringPainted(true);
         activityIndicator.setMinimum(0); activityIndicator.setMaximum(total); activityIndicator.setValue(completed);
         activityIndicator.setString(percent + "%");
-        elapsedDetail = phase + " · " + completed + "/" + total + " · " + percent + "%";
+        elapsedDetail = phase + " · " + completed + "/" + total;
         refreshElapsedStatus();
     }
 
@@ -470,7 +471,7 @@ public final class Main {
             activityIndicator.setIndeterminate(false);
             activityIndicator.setMinimum(0); activityIndicator.setMaximum(100); activityIndicator.setValue(percent);
             activityIndicator.setString(percent + "%");
-            elapsedDetail = String.format(Locale.ROOT, "Comparando filas · %,d / %,d · %d%%", rowsRead, totalRows, percent);
+            elapsedDetail = String.format(Locale.ROOT, "Comparando filas · %,d / %,d", rowsRead, totalRows);
         }
         refreshElapsedStatus();
     }
@@ -486,9 +487,27 @@ public final class Main {
 
     private void refreshResults() {
         if (!compared) { showCatalog(); return; }
-        List<SchemaObject> left = sourceObjects.stream().filter(o -> comparedKeys.contains(o.key())).toList();
-        List<SchemaObject> right = targetObjects.stream().filter(o -> comparedKeys.contains(o.key())).toList();
-        List<DiffEngine.Result> values = new DiffEngine().compare(left, right, selectedKinds, comparedKeys); setResultItems(values);
+        // compare(false) reutiliza las definiciones en caché y solo consulta las
+        // de los tipos que se acaban de activar por primera vez.
+        compare(false);
+    }
+
+    private boolean chooseInitialObjectKinds() {
+        JPanel choices = new JPanel(new GridLayout(0, 1, 4, 2));
+        Map<SchemaObject.Kind, JCheckBox> boxes = new java.util.EnumMap<>(SchemaObject.Kind.class);
+        for (SchemaObject.Kind kind : SchemaObject.Kind.values()) {
+            long sourceCount = sourceObjects.stream().filter(object -> object.key().kind() == kind).count();
+            long targetCount = targetObjects.stream().filter(object -> object.key().kind() == kind).count();
+            JCheckBox box = new JCheckBox(kindName(kind) + "  ·  origen " + sourceCount + " / destino " + targetCount,
+                    selectedKinds.contains(kind));
+            boxes.put(kind, box); choices.add(box);
+        }
+        int answer = JOptionPane.showConfirmDialog(frame, choices, "Elegir tipos para comparar",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (answer != JOptionPane.OK_OPTION) return false;
+        selectedKinds.clear();
+        boxes.forEach((kind, box) -> { if (box.isSelected()) selectedKinds.add(kind); });
+        return true;
     }
 
     private void showCatalog() {
