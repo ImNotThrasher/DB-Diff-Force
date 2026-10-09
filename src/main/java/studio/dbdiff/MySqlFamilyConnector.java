@@ -2,6 +2,7 @@ package studio.dbdiff;
 
 import java.sql.*;
 import java.util.*;
+import java.util.function.BiConsumer;
 
 /** Shared read-only connector for MySQL-family engines. */
 abstract class MySqlFamilyConnector implements DatabaseConnector {
@@ -204,6 +205,11 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     }
 
     @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges) throws SQLException {
+        return compareTableRows(peerConnector, key, maxChanges, (completed, total) -> { });
+    }
+
+    @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
+                                                       BiConsumer<Long, Long> progress) throws SQLException {
         requireConnection();
         if (!(peerConnector instanceof MySqlFamilyConnector peer) || peer.engine != engine) throw new SQLException("Row comparison requires matching database engines.");
         peer.requireConnection();
@@ -221,6 +227,10 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         for (RowDiff.Column column : primaryKey) if (!safeKey(column.type()))
             throw new SQLException("Skipped: primary key column " + column.name() + " has unsupported ordering type " + column.type() + ".");
 
+        progress.accept(0L, -1L);
+        long totalRows = countRows(key.name()) + peer.countRows(key.name());
+        progress.accept(0L, totalRows);
+
         String columnsSql = columns.stream().map(c -> quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
         String order = primaryKey.stream().map(c -> isText(c.type()) ? "CAST(" + quote(c.name()) + " AS BINARY)" : quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
         String query = "SELECT " + columnsSql + " FROM " + quote(database) + "." + quote(key.name()) + " ORDER BY " + order;
@@ -235,7 +245,9 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
                 // Ambos cursores llegan ordenados por clave. Avanzarlos como una
                 // fusión evita cargar las tablas completas en memoria.
                 boolean hasA = a.next(), hasB = b.next();
+                long rowsRead = 0, lastReported = 0;
                 while (hasA || hasB) {
+                    rowsRead += (hasA ? 1 : 0) + (hasB ? 1 : 0);
                     Map<String, Object> rowA = hasA ? readRow(a, columns) : null;
                     Map<String, Object> rowB = hasB ? readRow(b, columns) : null;
                     int comparison = !hasA ? 1 : !hasB ? -1 : compareKeys(rowA, rowB, primaryKey);
@@ -252,12 +264,22 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
                         }
                         hasA = a.next(); hasB = b.next();
                     }
+                    if (rowsRead - lastReported >= 500) { progress.accept(rowsRead, totalRows); lastReported = rowsRead; }
                 }
+                progress.accept(rowsRead, totalRows);
             }
         }
         truncated = counts[0] + counts[1] + counts[3] > changes.size();
         return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
                 truncated ? "Only the first " + maxChanges + " row changes are retained; export is limited to those rows." : "");
+    }
+
+    private long countRows(String table) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM " + quote(database) + "." + quote(table);
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
+            if (!rows.next()) throw new SQLException("Could not count rows in " + table);
+            return rows.getLong(1);
+        }
     }
 
     private List<RowDiff.Column> readColumns(String table) throws SQLException {

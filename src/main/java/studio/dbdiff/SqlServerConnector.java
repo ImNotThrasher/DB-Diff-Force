@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
+import java.util.function.BiConsumer;
 
 /** JDBC connector for SQL Server catalogs, object definitions, and primary-key row diffs. */
 public final class SqlServerConnector implements DatabaseConnector {
@@ -202,8 +203,9 @@ public final class SqlServerConnector implements DatabaseConnector {
     /** Build CREATE TABLE text from SQL Server catalog rows; unsupported index features remain explicit. */
     private SchemaObject loadTable(SchemaObject.Key key) throws SQLException {
         List<String> definitions = new ArrayList<>();
-        List<String> columns = readTableColumns(key, definitions);
+        List<String> columns = readTableColumns(key);
         if (columns.isEmpty()) return unavailableTable(key, "table is hidden or metadata permissions are missing");
+        definitions.addAll(columns);
         definitions.addAll(readKeyConstraints(key));
         definitions.addAll(readForeignKeys(key));
         List<String> checks = readCheckConstraints(key);
@@ -223,7 +225,7 @@ public final class SqlServerConnector implements DatabaseConnector {
         return new SchemaObject(key, text, canonicalSql(text));
     }
 
-    private List<String> readTableColumns(SchemaObject.Key key, List<String> definitions) throws SQLException {
+    private List<String> readTableColumns(SchemaObject.Key key) throws SQLException {
         List<String> result = new ArrayList<>();
         String sql = "SELECT c.name,t.name AS type_name,SCHEMA_NAME(t.schema_id) AS type_schema,t.is_user_defined,"
                 + "c.max_length,c.precision,c.scale,c.is_nullable,c.is_identity,CONVERT(varchar(100),ic.seed_value),"
@@ -401,6 +403,11 @@ public final class SqlServerConnector implements DatabaseConnector {
     }
 
     @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges) throws SQLException {
+        return compareTableRows(peerConnector, key, maxChanges, (completed, total) -> { });
+    }
+
+    @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
+                                                       BiConsumer<Long, Long> progress) throws SQLException {
         requireConnection();
         if (!(peerConnector instanceof SqlServerConnector peer)) throw new SQLException("Row comparison requires two SQL Server connections.");
         peer.requireConnection();
@@ -409,12 +416,17 @@ public final class SqlServerConnector implements DatabaseConnector {
         List<RowDiff.Column> columns = readColumns(key), peerColumns = peer.readColumns(key);
         List<RowDiff.Column> primaryKey = readPrimaryKey(key), peerPrimaryKey = peer.readPrimaryKey(key);
         if (columns.isEmpty()) throw new SQLException("Table has no visible columns or SELECT permission is missing.");
-        if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey)) throw new SQLException("Skipped: table columns or primary key differ between endpoints. Compare table schema first.");
+        if (!columns.equals(peerColumns)) throw new SQLException("Skipped: table columns differ between endpoints. Compare the complete column definitions first.");
+        if (!primaryKey.equals(peerPrimaryKey)) throw new SQLException("Skipped: primary keys differ between endpoints. Compare the primary key definitions first.");
         if (primaryKey.isEmpty()) throw new SQLException("Skipped: table has no primary key; rows cannot be matched safely.");
         for (RowDiff.Column column : columns) if (!safeComparable(column.type()))
             throw new SQLException("Skipped: column " + column.name() + " has unsupported comparison type " + column.type() + ".");
         for (RowDiff.Column column : primaryKey) if (!safeKey(column.type()))
             throw new SQLException("Skipped: primary key column " + column.name() + " has unsupported ordering type " + column.type() + ".");
+
+        progress.accept(0L, -1L);
+        long totalRows = countRows(key) + peer.countRows(key);
+        progress.accept(0L, totalRows);
 
         String selectedColumns = columns.stream().map(column -> quote(column.name())).collect(java.util.stream.Collectors.joining(", "));
         String orderBy = primaryKey.stream().map(column -> isText(column.type())
@@ -428,7 +440,9 @@ public final class SqlServerConnector implements DatabaseConnector {
             left.setFetchSize(500); right.setFetchSize(500);
             try (ResultSet sourceRows = left.executeQuery(); ResultSet targetRows = right.executeQuery()) {
                 boolean hasSource = sourceRows.next(), hasTarget = targetRows.next();
+                long rowsRead = 0, lastReported = 0;
                 while (hasSource || hasTarget) {
+                    rowsRead += (hasSource ? 1 : 0) + (hasTarget ? 1 : 0);
                     Map<String, Object> sourceRow = hasSource ? readRow(sourceRows, columns) : null;
                     Map<String, Object> targetRow = hasTarget ? readRow(targetRows, columns) : null;
                     int comparison = !hasSource ? 1 : !hasTarget ? -1 : compareKeys(sourceRow, targetRow, primaryKey);
@@ -445,12 +459,22 @@ public final class SqlServerConnector implements DatabaseConnector {
                         }
                         hasSource = sourceRows.next(); hasTarget = targetRows.next();
                     }
+                    if (rowsRead - lastReported >= 500) { progress.accept(rowsRead, totalRows); lastReported = rowsRead; }
                 }
+                progress.accept(rowsRead, totalRows);
             }
         }
         boolean truncated = counts[0] + counts[1] + counts[3] > changes.size();
         return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
                 truncated ? "Only the first " + maxChanges + " row changes are retained; export is limited to those rows." : "");
+    }
+
+    private long countRows(SchemaObject.Key key) throws SQLException {
+        String sql = "SELECT COUNT_BIG(*) FROM " + qualified(database, key);
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
+            if (!rows.next()) throw new SQLException("Could not count rows in " + key.qualifiedName());
+            return rows.getLong(1);
+        }
     }
 
     private List<RowDiff.Column> readColumns(SchemaObject.Key key) throws SQLException {

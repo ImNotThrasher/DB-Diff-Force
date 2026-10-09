@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.IntConsumer;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -116,6 +117,9 @@ public final class Main {
     private long selectionRequest;
     private long rowComparisonRequest;
     private long comparisonRequest;
+    private long elapsedStartedAtNanos;
+    private String elapsedDetail = "";
+    private final javax.swing.Timer elapsedTimer = new javax.swing.Timer(1000, event -> refreshElapsedStatus());
     private boolean updatingResultItems;
     private int objectSortColumn = 1;
     private boolean objectSortAscending = true;
@@ -377,7 +381,21 @@ public final class Main {
                 DependencyReport refreshedTarget = refreshCatalog ? safeDependencyReport(targetConnector) : targetDependencyReport;
                 Set<SchemaObject.Key> sourceCache = refreshCatalog ? Set.of() : loadedA;
                 Set<SchemaObject.Key> targetCache = refreshCatalog ? Set.of() : loadedB;
-                List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, sourceCache), b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, targetCache);
+                int totalObjects = countSelected(sourceCatalog, kinds, selectedKeys) + countSelected(targetCatalog, kinds, selectedKeys);
+                SwingUtilities.invokeLater(() -> {
+                    if (request == comparisonRequest && schemaComparisonRunning && totalObjects > 0)
+                        showProgress(0, totalObjects, "Leyendo definiciones");
+                });
+                int[] completed = {0};
+                IntConsumer progress = ignored -> {
+                    int value = ++completed[0];
+                    SwingUtilities.invokeLater(() -> {
+                        if (request == comparisonRequest && schemaComparisonRunning)
+                            showProgress(value, totalObjects, "Leyendo definiciones");
+                    });
+                };
+                List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, sourceCache, progress);
+                List<SchemaObject> b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, targetCache, progress);
                 List<DiffEngine.Result> results = new DiffEngine().compare(a, b, kinds, selectedKeys);
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) return;
@@ -400,14 +418,70 @@ public final class Main {
         });
     }
 
+    private static int countSelected(List<SchemaObject> catalog, Set<SchemaObject.Kind> kinds, Set<SchemaObject.Key> selected) {
+        return (int) catalog.stream().filter(object -> kinds.contains(object.key().kind()))
+                .filter(object -> selected.isEmpty() || selected.contains(object.key())).count();
+    }
+
     private static List<SchemaObject> loadSelected(SchemaSource connector, List<SchemaObject> catalog, Set<SchemaObject.Kind> kinds,
-                                                   Set<SchemaObject.Key> selected, Set<SchemaObject.Key> cachedKeys) throws SQLException {
+                                                   Set<SchemaObject.Key> selected, Set<SchemaObject.Key> cachedKeys,
+                                                   IntConsumer progress) throws SQLException {
         // El catálogo solo trae nombres; las definiciones se cargan bajo demanda y
         // las ya leídas se reutilizan para evitar consultas repetidas al servidor.
         List<SchemaObject> result = new ArrayList<>();
-        for (SchemaObject object : catalog) if (kinds.contains(object.key().kind()) && (selected.isEmpty() || selected.contains(object.key())))
+        for (SchemaObject object : catalog) if (kinds.contains(object.key().kind()) && (selected.isEmpty() || selected.contains(object.key()))) {
             result.add(cachedKeys.contains(object.key()) ? object : connector.loadObject(object.key()));
+            progress.accept(1);
+        }
         return result;
+    }
+
+    private void showProgress(int completed, int total, String phase) {
+        int percent = total == 0 ? 100 : Math.min(100, completed * 100 / total);
+        ensureElapsedTimer();
+        activityIndicator.setIndeterminate(false);
+        activityIndicator.setStringPainted(true);
+        activityIndicator.setMinimum(0); activityIndicator.setMaximum(total); activityIndicator.setValue(completed);
+        activityIndicator.setString(percent + "%");
+        elapsedDetail = phase + " · " + completed + "/" + total + " · " + percent + "%";
+        refreshElapsedStatus();
+    }
+
+    private void beginElapsed(String detail) {
+        elapsedStartedAtNanos = System.nanoTime();
+        elapsedDetail = detail;
+        elapsedTimer.start();
+        refreshElapsedStatus();
+    }
+
+    private void ensureElapsedTimer() {
+        if (!elapsedTimer.isRunning()) beginElapsed(elapsedDetail);
+    }
+
+    private void showRowProgress(long rowsRead, long totalRows) {
+        ensureElapsedTimer();
+        activityIndicator.setStringPainted(true);
+        if (totalRows < 0) {
+            activityIndicator.setIndeterminate(true);
+            activityIndicator.setString("…");
+            elapsedDetail = "Contando filas…";
+        } else {
+            int percent = totalRows == 0 ? 100 : (int) Math.min(100, rowsRead * 100 / totalRows);
+            activityIndicator.setIndeterminate(false);
+            activityIndicator.setMinimum(0); activityIndicator.setMaximum(100); activityIndicator.setValue(percent);
+            activityIndicator.setString(percent + "%");
+            elapsedDetail = String.format(Locale.ROOT, "Comparando filas · %,d / %,d · %d%%", rowsRead, totalRows, percent);
+        }
+        refreshElapsedStatus();
+    }
+
+    private void refreshElapsedStatus() {
+        if (elapsedStartedAtNanos == 0) return;
+        long elapsedSeconds = Math.max(0, (System.nanoTime() - elapsedStartedAtNanos) / 1_000_000_000L);
+        long hours = elapsedSeconds / 3600, minutes = (elapsedSeconds % 3600) / 60, seconds = elapsedSeconds % 60;
+        String elapsed = hours > 0 ? String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, seconds)
+                : String.format(Locale.ROOT, "%02d:%02d", minutes, seconds);
+        connectionStatus.setText(elapsedDetail + " · " + elapsed);
     }
 
     private void refreshResults() {
@@ -664,11 +738,16 @@ public final class Main {
         DatabaseConnector targetConnector = target;
         rowComparisonPanel.showLoading(selected.key().qualifiedName());
         setBusy(true, "Leyendo las filas de " + selected.key().qualifiedName() + "…");
+        beginElapsed("Contando filas…");
+        showRowProgress(0, -1);
         // Consultar en el worker evita bloquear Swing; el token descarta respuestas
         // antiguas si el usuario seleccionó otra tabla antes de terminar.
         worker.submit(() -> {
             try {
-                RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), Integer.MAX_VALUE);
+                RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), Integer.MAX_VALUE,
+                        (rowsRead, totalRows) -> SwingUtilities.invokeLater(() -> {
+                            if (request == rowComparisonRequest && isSelected(selected.key())) showRowProgress(rowsRead, totalRows);
+                        }));
                 SwingUtilities.invokeLater(() -> {
                     if (request != rowComparisonRequest || !isSelected(selected.key())) return;
                     try {
@@ -807,6 +886,11 @@ public final class Main {
         if (busy || !schemaComparisonRunning) connectionStatus.setText(text);
         boolean active = busy || schemaComparisonRunning;
         activityIndicator.setVisible(active);
+        if (!active) {
+            activityIndicator.setIndeterminate(true);
+            activityIndicator.setStringPainted(false);
+            elapsedTimer.stop(); elapsedStartedAtNanos = 0; elapsedDetail = "";
+        }
         frame.setCursor(active ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor());
     }
 
