@@ -139,7 +139,7 @@ public final class Main {
 
     private void show() {
         loadUiPreferences();
-        frame.setIconImages(BrandMark.windowImages());
+        frame.setIconImages(UiIcons.windowImages());
         frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         frame.addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) { close(); } });
         frame.setMinimumSize(new Dimension(1020, 680)); frame.setSize(1260, 820); frame.setLocationRelativeTo(null);
@@ -156,7 +156,7 @@ public final class Main {
     private JComponent header() {
         JPanel panel = new JPanel(new HeaderLayout()); headerPanel = panel; panel.putClientProperty("dbdiff.header", Boolean.TRUE); panel.setBorder(new EmptyBorder(10, 16, 10, 16));
         JPanel brand = new JPanel(new BorderLayout(12, 0)); brand.setOpaque(false);
-        JLabel logo = new JLabel(BrandMark.icon(46)); logo.setBorder(new EmptyBorder(0, 0, 0, 2));
+        JLabel logo = new JLabel(UiIcons.themed(UiIcons.CONNECT, 46)); logo.setBorder(new EmptyBorder(0, 0, 0, 2));
         JLabel title = new JLabel(AppInfo.NAME); title.putClientProperty("FlatLaf.styleClass", "h2");
         JPanel brandText = new JPanel(); brandText.setOpaque(false); brandText.setLayout(new BoxLayout(brandText, BoxLayout.Y_AXIS));
         brandText.add(title);

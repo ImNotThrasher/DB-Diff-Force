@@ -67,10 +67,10 @@ final class ConnectionDialog extends JDialog {
         JPanel header = new JPanel(new GridBagLayout());
         header.setBorder(new EmptyBorder(12, 16, 8, 16));
         GridBagConstraints hc = new GridBagConstraints(); hc.insets = new Insets(4, 6, 4, 6); hc.anchor = GridBagConstraints.WEST;
-        hc.gridx = 0; hc.gridy = 0; header.add(new JLabel("Motor de base de datos"), hc);
-        hc.gridx = 1; header.add(engine, hc);
-        hc.gridx = 2; hc.insets = new Insets(4, 20, 4, 6); header.add(new JLabel("Tipo de origen"), hc);
-        hc.gridx = 3; hc.insets = new Insets(4, 6, 4, 6); sourceMode.setPrototypeDisplayValue(SourceMode.SNAPSHOT); header.add(sourceMode, hc);
+        hc.gridx = 0; hc.gridy = 0; header.add(new JLabel("Tipo de origen"), hc);
+        sourceMode.setPrototypeDisplayValue(SourceMode.SNAPSHOT); hc.gridx = 1; header.add(sourceMode, hc);
+        hc.gridx = 2; hc.insets = new Insets(4, 20, 4, 6); header.add(new JLabel("Motor de base de datos"), hc);
+        hc.gridx = 3; hc.insets = new Insets(4, 6, 4, 6); header.add(engine, hc);
 
         originCards.add(buildDatabasePanel(0), "database");
         originCards.add(buildFileSourcePanel(), "file");
@@ -103,14 +103,18 @@ final class ConnectionDialog extends JDialog {
         JPanel profileControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0)); profileControls.add(saveProfile); profileControls.add(deleteProfile);
         JPanel profileRow = new JPanel(new BorderLayout(4, 0)); profileRow.add(savedChoice, BorderLayout.CENTER); profileRow.add(profileControls, BorderLayout.EAST);
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(profileRow, c);
-        for (int row = 0; row < labels.length; row++) {
-            c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel(labels[row]), c);
-            c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
-            JTextField field = new JTextField(defaults[row], 15); fields[side][row] = field; panel.add(field, c);
-        }
+        c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel(labels[0]), c);
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
+        JTextField hostField = new JTextField(defaults[0], 15); fields[side][0] = hostField; panel.add(hostField, c);
+        c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel(labels[1]), c);
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
+        JTextField portField = new JTextField(defaults[1], 15); fields[side][1] = portField; panel.add(portField, c);
         c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel("Base de datos"), c);
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
         JComboBox<String> database = databases.get(side); database.setEnabled(false); database.setPrototypeDisplayValue("Elegí una base de datos"); panel.add(database, c);
+        c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel(labels[2]), c);
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
+        JTextField userField = new JTextField(defaults[2], 15); fields[side][2] = userField; panel.add(userField, c);
         c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel("Contraseña"), c);
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; passwords[side].setEchoChar('•'); panel.add(passwords[side], c);
         c.gridy++; c.gridx = 0; c.gridwidth = 2; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; rememberPasswords[side].setToolTipText("Solo si activás esta opción se guarda la contraseña en el almacén seguro del sistema operativo."); panel.add(rememberPasswords[side], c);

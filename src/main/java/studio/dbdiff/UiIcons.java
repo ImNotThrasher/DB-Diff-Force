@@ -10,6 +10,9 @@ import javax.swing.UIManager;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Graphics;
+import java.awt.Image;
+import java.awt.image.BufferedImage;
+import java.util.List;
 
 /** Central icon choices for the Swing interface. */
 final class UiIcons {
@@ -33,6 +36,17 @@ final class UiIcons {
     private UiIcons() { }
 
     static Icon themed(Ikon icon, int size) { return new ThemeIcon(icon, size); }
+
+    static List<Image> windowImages() {
+        return List.of(16, 24, 32, 48, 64, 128).stream().map(size -> {
+            FontIcon icon = FontIcon.of(CONNECT, size, new Color(76, 175, 230));
+            BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+            Graphics graphics = image.createGraphics();
+            icon.paintIcon(null, graphics, 0, 0);
+            graphics.dispose();
+            return (Image) image;
+        }).toList();
+    }
 
     private static final class ThemeIcon implements Icon {
         private final Ikon icon;
