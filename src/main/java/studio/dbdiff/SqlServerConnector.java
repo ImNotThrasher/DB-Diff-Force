@@ -60,12 +60,29 @@ public final class SqlServerConnector implements DatabaseConnector {
                 + "WHERE o.is_ms_shipped=0 AND o.type IN ('U','V','P','FN','IF','TF','FS','FT','TR') ORDER BY s.name,o.name";
         try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
             while (rows.next()) {
+                // SQL Server expone sys.objects.type como char(2), con espacios
+                // de relleno (p. ej. "U " y "P "). Normalizar antes de mapearlo.
                 SchemaObject.Kind kind = kind(rows.getString(3));
                 if (kind != null) result.add(new SchemaObject(new SchemaObject.Key(kind, rows.getString(2), rows.getString(1)), "", ""));
             }
         }
         result.sort(Comparator.comparing(SchemaObject::key));
         return List.copyOf(result);
+    }
+
+    @Override public String catalogDiagnostics(List<SchemaObject> catalog) throws SQLException {
+        StringBuilder report = new StringBuilder("Base conectada: ").append(database).append("\n")
+                .append(DatabaseConnector.super.catalogDiagnostics(catalog))
+                .append("\n\nObjetos en sys.objects por tipo (catálogo SQL Server):");
+        String sql = "SELECT type,type_desc,COUNT_BIG(*) FROM sys.objects WHERE is_ms_shipped=0 GROUP BY type,type_desc ORDER BY type_desc";
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
+            while (rows.next()) report.append("\n").append(rows.getString(2)).append(" [")
+                    .append(rows.getString(1)).append("]: ").append(rows.getLong(3));
+        }
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("SELECT COUNT_BIG(*) FROM sys.tables WHERE is_ms_shipped=0")) {
+            if (rows.next()) report.append("\n\nTablas de usuario en sys.tables: ").append(rows.getLong(1));
+        }
+        return report.toString();
     }
 
     @Override public SchemaObject loadObject(SchemaObject.Key key) throws SQLException {
@@ -545,7 +562,7 @@ public final class SqlServerConnector implements DatabaseConnector {
         // LEFT JOINs against sys.objects produce a null type for unresolved
         // references (for example, objects in another database/server).
         if (type == null) return null;
-        return switch (type) { case "U" -> SchemaObject.Kind.TABLE; case "V" -> SchemaObject.Kind.VIEW; case "P" -> SchemaObject.Kind.PROCEDURE; case "FN", "IF", "TF", "FS", "FT" -> SchemaObject.Kind.FUNCTION; case "TR" -> SchemaObject.Kind.TRIGGER; default -> null; };
+        return switch (type.strip()) { case "U" -> SchemaObject.Kind.TABLE; case "V" -> SchemaObject.Kind.VIEW; case "P" -> SchemaObject.Kind.PROCEDURE; case "FN", "IF", "TF", "FS", "FT" -> SchemaObject.Kind.FUNCTION; case "TR" -> SchemaObject.Kind.TRIGGER; default -> null; };
     }
 
     private SchemaObject unavailableTable(SchemaObject.Key key, String reason) {

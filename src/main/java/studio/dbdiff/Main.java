@@ -190,7 +190,12 @@ public final class Main {
         JPanel listArea = new JPanel(new BorderLayout(0, 4)); listArea.setOpaque(false); listArea.add(listTop, BorderLayout.NORTH); listArea.add(listScroll, BorderLayout.CENTER);
         JPanel legend = objectStatusLegend();
         left.add(controls, BorderLayout.NORTH); left.add(listArea, BorderLayout.CENTER); JPanel objectFooter = new JPanel(new BorderLayout(0, 6));
-        objectFooter.add(objectCount, BorderLayout.NORTH); objectFooter.add(legend, BorderLayout.CENTER);
+        JButton diagnostics = new JButton("Diagnóstico del catálogo");
+        diagnostics.setToolTipText("Comparar el listado de la aplicación con los conteos del catálogo del servidor.");
+        diagnostics.addActionListener(event -> showCatalogDiagnostics());
+        JPanel footerTop = new JPanel(new BorderLayout(8, 0)); footerTop.setOpaque(false);
+        footerTop.add(objectCount, BorderLayout.CENTER); footerTop.add(diagnostics, BorderLayout.EAST);
+        objectFooter.add(footerTop, BorderLayout.NORTH); objectFooter.add(legend, BorderLayout.CENTER);
         left.add(objectFooter, BorderLayout.SOUTH);
         JPanel right = new JPanel(new BorderLayout(0, 8)); right.setBorder(new EmptyBorder(15, 12, 15, 16));
         comparisonSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, comparisonView, rowComparisonPanel);
@@ -231,6 +236,10 @@ public final class Main {
             }
             return;
         }
+        // Una búsqueda puede contener el esquema de SQL Server (por ejemplo,
+        // "dbo.clientes"). No arrastrarla a una nueva conexión confunde el
+        // listado del nuevo catálogo con tablas ausentes.
+        objectSearch.setText("");
         if (selection.mode() == ConnectionDialog.SourceMode.FLYWAY) {
             Endpoint destination = selection.destination();
             String message = "Flyway ejecutará las migraciones de:\n" + selection.sourceFolder() + "\n\n"
@@ -423,8 +432,10 @@ public final class Main {
         JPanel header = new JPanel(new BorderLayout(4, 0)); header.setOpaque(false);
         header.setBorder(new EmptyBorder(2, 6, 2, 6));
         header.add(sortHeader("ESTADO", 0, com.formdev.flatlaf.util.UIScale.scale(52)), BorderLayout.WEST);
-        header.add(sortHeader("NOMBRE", 1, 0), BorderLayout.CENTER);
-        header.add(sortHeader("TIPO", 2, com.formdev.flatlaf.util.UIScale.scale(82)), BorderLayout.EAST);
+        JPanel labels = new JPanel(new BorderLayout(4, 0)); labels.setOpaque(false);
+        labels.add(sortHeader("TIPO", 1, com.formdev.flatlaf.util.UIScale.scale(102)), BorderLayout.WEST);
+        labels.add(sortHeader("NOMBRE", 2, 0), BorderLayout.CENTER);
+        header.add(labels, BorderLayout.CENTER);
         return header;
     }
 
@@ -459,7 +470,7 @@ public final class Main {
         for (Component component : header.getComponents()) {
             if (component instanceof JLabel label) {
                 String title = label.getText().replaceAll(" [▲▼]$", "");
-                int column = switch (title) { case "ESTADO" -> 0; case "TIPO" -> 2; default -> 1; };
+                int column = switch (title) { case "ESTADO" -> 0; case "TIPO" -> 1; default -> 2; };
                 updateSortHeader(label, title, column);
             }
         }
@@ -535,8 +546,8 @@ public final class Main {
     private void sortObjectItems(List<Object> items) {
         Comparator<Object> comparator = switch (objectSortColumn) {
             case 0 -> Comparator.comparingInt(Main::objectStatusRank);
-            case 2 -> Comparator.comparing(item -> kindName(objectKey(item).kind()), String.CASE_INSENSITIVE_ORDER);
-            default -> Comparator.comparing(item -> objectKey(item).qualifiedName(), String.CASE_INSENSITIVE_ORDER);
+            case 2 -> Comparator.comparing(item -> objectKey(item).qualifiedName(), String.CASE_INSENSITIVE_ORDER);
+            default -> Comparator.comparing(item -> kindName(objectKey(item).kind()), String.CASE_INSENSITIVE_ORDER);
         };
         if (!objectSortAscending) comparator = comparator.reversed();
         items.sort(comparator.thenComparing(item -> objectKey(item).qualifiedName(), String.CASE_INSENSITIVE_ORDER));
@@ -752,6 +763,32 @@ public final class Main {
                 + (rows.truncated() ? " · resultados limitados" : "");
     }
 
+    private void showCatalogDiagnostics() {
+        if (source == null || target == null) return;
+        SchemaSource left = source, right = target;
+        List<SchemaObject> leftCatalog = sourceObjects, rightCatalog = targetObjects;
+        String leftName = sourceDatabase, rightName = targetDatabase;
+        setBusy(true, "Consultando diagnóstico de catálogos…");
+        worker.submit(() -> {
+            try {
+                String report = "ORIGEN · " + leftName + "\n" + left.catalogDiagnostics(leftCatalog)
+                        + "\n\nDESTINO · " + rightName + "\n" + right.catalogDiagnostics(rightCatalog);
+                SwingUtilities.invokeLater(() -> {
+                    setBusy(false, "Diagnóstico de catálogos listo");
+                    JTextArea details = new JTextArea(report, 28, 76);
+                    details.setEditable(false); details.setCaretPosition(0);
+                    JOptionPane.showMessageDialog(frame, new JScrollPane(details), "Diagnóstico del catálogo", JOptionPane.INFORMATION_MESSAGE);
+                });
+            } catch (SQLException | RuntimeException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    setBusy(false, "Falló el diagnóstico del catálogo");
+                    JOptionPane.showMessageDialog(frame, "No se pudo consultar el diagnóstico: " + AppUtils.errorMessage(ex),
+                            "Diagnóstico del catálogo", JOptionPane.ERROR_MESSAGE);
+                });
+            }
+        });
+    }
+
     private ExportDialogs exportDialogs() {
         return new ExportDialogs(frame, theme, codeFontFamily, codeFontSize, schemaEngine);
     }
@@ -862,14 +899,16 @@ public final class Main {
 
     static final class ResultRenderer extends JPanel implements ListCellRenderer<Object> {
         private final JLabel marker = new JLabel(" ", JLabel.CENTER);
-        private final JLabel name = new JLabel();
         private final JLabel type = new JLabel();
+        private final JLabel name = new JLabel();
 
         ResultRenderer() {
             super(new BorderLayout(4, 0));
         marker.setPreferredSize(new Dimension(com.formdev.flatlaf.util.UIScale.scale(52), 20));
-        type.setPreferredSize(new Dimension(com.formdev.flatlaf.util.UIScale.scale(82), 20));
-            add(marker, BorderLayout.WEST); add(name, BorderLayout.CENTER); add(type, BorderLayout.EAST);
+        type.setPreferredSize(new Dimension(com.formdev.flatlaf.util.UIScale.scale(102), 20));
+            JPanel details = new JPanel(new BorderLayout(4, 0)); details.setOpaque(false);
+            details.add(type, BorderLayout.WEST); details.add(name, BorderLayout.CENTER);
+            add(marker, BorderLayout.WEST); add(details, BorderLayout.CENTER);
             setBorder(new EmptyBorder(5, 6, 5, 6));
             name.setFont(javax.swing.UIManager.getFont("Label.font"));
             type.setFont(javax.swing.UIManager.getFont("Label.font"));
