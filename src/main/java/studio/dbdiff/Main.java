@@ -16,6 +16,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.event.MouseEvent;
 import java.awt.Insets;
+import java.awt.Rectangle;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -107,6 +108,8 @@ public final class Main {
     private String theme = "Sistema";
     private int codeFontSize = 13;
     private String codeFontFamily = "";
+    private boolean rememberWindowBounds;
+    private boolean startMaximized;
     private JPanel headerPanel, leftPanel;
     private JSplitPane workspaceSplit;
     private JSplitPane comparisonSplit;
@@ -141,9 +144,16 @@ public final class Main {
         loadUiPreferences();
         frame.setIconImages(UiIcons.windowImages());
         frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
-        frame.addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) { close(); } });
-        frame.setMinimumSize(new Dimension(1020, 680)); frame.setSize(1260, 820); frame.setLocationRelativeTo(null);
+        frame.addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { close(); }
+            @Override public void windowDeactivated(WindowEvent e) { saveWindowBounds(); }
+        });
+        frame.setMinimumSize(new Dimension(1020, 680));
+        Rectangle savedBounds = loadWindowBounds();
+        frame.setSize(savedBounds == null ? new Dimension(1260, 820) : savedBounds.getSize());
+        frame.setLocation(savedBounds == null ? centeredLocation(frame.getSize()) : savedBounds.getLocation());
         frame.setLayout(new BorderLayout(0, 0)); frame.add(header(), BorderLayout.NORTH); frame.add(content(), BorderLayout.CENTER); frame.add(statusBar(), BorderLayout.SOUTH);
+        if (startMaximized) frame.setExtendedState(frame.getExtendedState() | JFrame.MAXIMIZED_BOTH);
         setConnectionAvailable(false);
         comparisonView.showMessage("Elegí Nueva comparación para configurar el origen y la base destino. La comparación del esquema comienza automáticamente.");
         applyTheme(); frame.setVisible(true);
@@ -986,6 +996,8 @@ public final class Main {
             stackedLayout = Boolean.parseBoolean(values.getProperty("stackedLayout", "false"));
             String configuredFont = values.getProperty("codeFontFamily", "");
             codeFontFamily = DiffCodeEditor.installedFamily(configuredFont) == null ? "" : configuredFont;
+            rememberWindowBounds = Boolean.parseBoolean(values.getProperty("rememberWindowBounds", "false"));
+            startMaximized = Boolean.parseBoolean(values.getProperty("startMaximized", "false"));
             try { codeFontSize = Math.clamp(Integer.parseInt(values.getProperty("codeFontSize", "13")), 10, 24); }
             catch (NumberFormatException ignored) { codeFontSize = 13; }
         } catch (IOException ignored) { }
@@ -994,7 +1006,7 @@ public final class Main {
     private void saveUiPreferences() {
         try {
             Files.createDirectories(UI_PREFERENCES.getParent());
-            java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout)); values.setProperty("codeFontSize", Integer.toString(codeFontSize)); values.setProperty("codeFontFamily", codeFontFamily);
+            java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout)); values.setProperty("codeFontSize", Integer.toString(codeFontSize)); values.setProperty("codeFontFamily", codeFontFamily); values.setProperty("rememberWindowBounds", Boolean.toString(rememberWindowBounds)); values.setProperty("startMaximized", Boolean.toString(startMaximized));
             try (var output = Files.newOutputStream(UI_PREFERENCES)) { values.store(output, AppInfo.NAME + " appearance"); }
         } catch (IOException ex) { connectionStatus.setText("No se pudo guardar la apariencia: " + ex.getMessage()); }
     }
@@ -1011,10 +1023,51 @@ public final class Main {
     }
 
     private void showSettings() {
-        SettingsDialog.Selection selected = SettingsDialog.show(frame, theme, codeFontFamily, codeFontSize);
+        SettingsDialog.Selection selected = SettingsDialog.show(frame, theme, codeFontFamily, codeFontSize, rememberWindowBounds, startMaximized);
         if (selected == null) return;
         theme = selected.theme(); codeFontFamily = selected.fontFamily(); codeFontSize = selected.fontSize();
+        rememberWindowBounds = selected.rememberWindowBounds(); startMaximized = selected.startMaximized();
         saveUiPreferences(); applyTheme();
+    }
+
+    private Rectangle loadWindowBounds() {
+        if (!rememberWindowBounds) return null;
+        try {
+            java.util.Properties values = new java.util.Properties();
+            try (var input = Files.newInputStream(UI_PREFERENCES)) { values.load(input); }
+            int x = Integer.parseInt(values.getProperty("windowX"));
+            int y = Integer.parseInt(values.getProperty("windowY"));
+            int width = Math.max(1020, Integer.parseInt(values.getProperty("windowWidth")));
+            int height = Math.max(680, Integer.parseInt(values.getProperty("windowHeight")));
+            Rectangle candidate = new Rectangle(x, y, width, height);
+            return isOnScreen(candidate) ? candidate : null;
+        } catch (IOException | NumberFormatException | NullPointerException ignored) { return null; }
+    }
+
+    private static boolean isOnScreen(Rectangle bounds) {
+        for (java.awt.GraphicsDevice device : java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+            java.awt.GraphicsConfiguration configuration = device.getDefaultConfiguration();
+            if (configuration.getBounds().intersects(bounds)) return true;
+        }
+        return false;
+    }
+
+    private static java.awt.Point centeredLocation(Dimension size) {
+        Rectangle screen = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();
+        return new java.awt.Point(screen.x + (screen.width - size.width) / 2, screen.y + (screen.height - size.height) / 2);
+    }
+
+    private void saveWindowBounds() {
+        if (!rememberWindowBounds || !frame.isDisplayable() || (frame.getExtendedState() & JFrame.MAXIMIZED_BOTH) != 0) return;
+        try {
+            java.util.Properties values = new java.util.Properties();
+            if (Files.exists(UI_PREFERENCES)) try (var input = Files.newInputStream(UI_PREFERENCES)) { values.load(input); }
+            Rectangle bounds = frame.getBounds();
+            values.setProperty("windowX", Integer.toString(bounds.x)); values.setProperty("windowY", Integer.toString(bounds.y));
+            values.setProperty("windowWidth", Integer.toString(bounds.width)); values.setProperty("windowHeight", Integer.toString(bounds.height));
+            Files.createDirectories(UI_PREFERENCES.getParent());
+            try (var output = Files.newOutputStream(UI_PREFERENCES)) { values.store(output, AppInfo.NAME + " appearance"); }
+        } catch (IOException ignored) { }
     }
 
     static final class ResultRenderer extends JPanel implements ListCellRenderer<Object> {

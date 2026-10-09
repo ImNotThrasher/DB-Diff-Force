@@ -50,6 +50,7 @@ final class ConnectionDialog extends JDialog {
     private final JLabel sourceCardDescription = new JLabel();
     private java.nio.file.Path selectedSourceFolder;
     private JButton connectButton;
+    private final JTextField[] firstFields = new JTextField[2];
 
     ConnectionDialog(JFrame owner) {
         super(owner, "Nueva comparación", true);
@@ -61,16 +62,21 @@ final class ConnectionDialog extends JDialog {
         });
         engine.setPrototypeDisplayValue(DatabaseEngine.SQLSERVER);
         engine.setPreferredSize(new Dimension(195, engine.getPreferredSize().height));
-        engine.setToolTipText("Motor de la base destino; ambos lados deben usar el mismo motor.");
+        engine.setToolTipText("El motor seleccionado se usa para origen y destino.");
         try { for (ConnectionProfile profile : ConnectionProfiles.load()) savedProfiles.put(profile.name(), profile); }
         catch (IOException ex) { JOptionPane.showMessageDialog(owner, "No se pudieron cargar los perfiles guardados: " + ex.getMessage(), "Perfiles no disponibles", JOptionPane.WARNING_MESSAGE); }
-        JPanel header = new JPanel(new GridBagLayout());
+        JPanel header = new JPanel(new BorderLayout(0, 4));
         header.setBorder(new EmptyBorder(12, 16, 8, 16));
+        JPanel selectionRow = new JPanel(new GridBagLayout());
         GridBagConstraints hc = new GridBagConstraints(); hc.insets = new Insets(4, 6, 4, 6); hc.anchor = GridBagConstraints.WEST;
-        hc.gridx = 0; hc.gridy = 0; header.add(new JLabel("Tipo de origen"), hc);
-        sourceMode.setPrototypeDisplayValue(SourceMode.SNAPSHOT); hc.gridx = 1; header.add(sourceMode, hc);
-        hc.gridx = 2; hc.insets = new Insets(4, 20, 4, 6); header.add(new JLabel("Motor de base de datos"), hc);
-        hc.gridx = 3; hc.insets = new Insets(4, 6, 4, 6); header.add(engine, hc);
+        hc.gridx = 0; hc.gridy = 0; selectionRow.add(new JLabel("Tipo de origen"), hc);
+        sourceMode.setPrototypeDisplayValue(SourceMode.SNAPSHOT); hc.gridx = 1; selectionRow.add(sourceMode, hc);
+        hc.gridx = 2; hc.insets = new Insets(4, 20, 4, 6); selectionRow.add(new JLabel("Motor (ambos lados)"), hc);
+        hc.gridx = 3; hc.insets = new Insets(4, 6, 4, 6); selectionRow.add(engine, hc);
+        header.add(selectionRow, BorderLayout.NORTH);
+        JLabel steps = new JLabel("1 · Configurá el origen     2 · Configurá el destino");
+        steps.setForeground(UIManager.getColor("Label.disabledForeground"));
+        steps.setBorder(new EmptyBorder(0, 6, 0, 0)); header.add(steps, BorderLayout.SOUTH);
 
         originCards.add(buildDatabasePanel(0), "database");
         originCards.add(buildFileSourcePanel(), "file");
@@ -87,7 +93,11 @@ final class ConnectionDialog extends JDialog {
         connectButton.addActionListener(e -> requestConnect());
         JPanel content = new JPanel(new BorderLayout()); content.add(header, BorderLayout.NORTH); content.add(endpoints, BorderLayout.CENTER);
         add(content, BorderLayout.CENTER); add(buttons, BorderLayout.SOUTH);
+        getRootPane().setDefaultButton(connectButton);
+        getRootPane().registerKeyboardAction(event -> { autoConnectRequested = false; dispose(); },
+                KeyStroke.getKeyStroke("ESCAPE"), JComponent.WHEN_IN_FOCUSED_WINDOW);
         updateSourceMode(); setMinimumSize(new Dimension(850, 480)); pack(); setLocationRelativeTo(owner);
+        SwingUtilities.invokeLater(() -> { if (isDisplayable()) firstFields[sourceMode.getSelectedItem() == SourceMode.DATABASE ? 0 : 1].requestFocusInWindow(); });
     }
 
     private JPanel buildDatabasePanel(int side) {
@@ -99,13 +109,15 @@ final class ConnectionDialog extends JDialog {
         c.gridx = 0; c.gridy = 0; c.gridwidth = 2; JLabel title = new JLabel(side == 0 ? "BASE DE ORIGEN" : "BASE DE DESTINO"); title.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD)); panel.add(title, c);
         c.gridy++; c.gridwidth = 1; c.weightx = 0; panel.add(new JLabel("Perfil"), c);
         JComboBox<String> savedChoice = savedChoices.get(side); savedChoice.setPrototypeDisplayValue("Elegí un perfil guardado"); refreshSavedChoices(side, null);
-        JButton saveProfile = new JButton("Guardar"), deleteProfile = new JButton("Eliminar");
+        JButton saveProfile = new JButton("Guardar perfil"), deleteProfile = new JButton("Eliminar");
+        saveProfile.setToolTipText("Guardar la conexión actual con un nombre para reutilizarla");
+        deleteProfile.setToolTipText("Eliminar el perfil seleccionado para este lado");
         JPanel profileControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0)); profileControls.add(saveProfile); profileControls.add(deleteProfile);
         JPanel profileRow = new JPanel(new BorderLayout(4, 0)); profileRow.add(savedChoice, BorderLayout.CENTER); profileRow.add(profileControls, BorderLayout.EAST);
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(profileRow, c);
         c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel(labels[0]), c);
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
-        JTextField hostField = new JTextField(defaults[0], 15); fields[side][0] = hostField; panel.add(hostField, c);
+        JTextField hostField = new JTextField(defaults[0], 15); fields[side][0] = hostField; firstFields[side] = hostField; panel.add(hostField, c);
         c.gridy++; c.gridx = 0; c.weightx = 0; c.fill = GridBagConstraints.NONE; panel.add(new JLabel(labels[1]), c);
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL;
         JTextField portField = new JTextField(defaults[1], 15); fields[side][1] = portField; panel.add(portField, c);
@@ -335,22 +347,38 @@ final class ConnectionDialog extends JDialog {
                         else if (available.size() == 1) choice.setSelectedIndex(0);
                         choice.setEnabled(!available.isEmpty()); testedSuccessfully[side] = true;
                         updatingDatabaseChoice[side] = false;
-                        testStatus[side].setText(available.isEmpty() ? "Conectado; no hay bases visibles" : choice.getSelectedItem() == null ? "Conectado · " + available.size() + " bases · elegí una" : "Conectado · base seleccionada");
+                        String status = available.isEmpty() ? "Conectado; no hay bases visibles" : choice.getSelectedItem() == null ? "Conectado · " + available.size() + " bases · elegí una" : "Conectado · base seleccionada";
+                        testStatus[side].setText(status); testStatus[side].setToolTipText(status);
                         testStatus[side].setForeground(available.isEmpty() ? UIManager.getColor("Component.warning.focusedBorderColor") : UIManager.getColor("Component.success.focusedBorderColor"));
                         finishAutomaticConnect();
                     } catch (InterruptedException ex) {
                         Thread.currentThread().interrupt(); testedSuccessfully[side] = false; autoConnectRequested = false; testStatus[side].setText("Prueba interrumpida");
                     } catch (ExecutionException ex) {
                         Throwable cause = ex.getCause() == null ? ex : ex.getCause();
-                        testedSuccessfully[side] = false; autoConnectRequested = false; testStatus[side].setText("Error de conexión"); testStatus[side].setForeground(UIManager.getColor("Component.error.focusedBorderColor"));
-                        JOptionPane.showMessageDialog(ConnectionDialog.this, cause.getMessage() == null ? cause.toString() : cause.getMessage(), "Falló la prueba de conexión", JOptionPane.ERROR_MESSAGE);
+                        String message = actionableConnectionError(cause);
+                        testedSuccessfully[side] = false; autoConnectRequested = false; testStatus[side].setText("Error · ver detalle"); testStatus[side].setToolTipText(message); testStatus[side].setForeground(UIManager.getColor("Component.error.focusedBorderColor"));
+                        JOptionPane.showMessageDialog(ConnectionDialog.this, message, "Falló la prueba de conexión", JOptionPane.ERROR_MESSAGE);
                     }
                 }
             }.execute();
         } catch (RuntimeException ex) {
             autoConnectRequested = false;
-            JOptionPane.showMessageDialog(this, "Revisá los datos de conexión: " + ex.getMessage(), "Datos de conexión no válidos", JOptionPane.WARNING_MESSAGE);
+            testStatus[side].setText("Datos inválidos · ver detalle"); testStatus[side].setToolTipText("Revisá servidor, puerto y usuario. Detalle: " + ex.getMessage());
+            testStatus[side].setForeground(UIManager.getColor("Component.warning.focusedBorderColor"));
         }
+    }
+
+    private static String actionableConnectionError(Throwable failure) {
+        String detail = failure.getMessage() == null ? failure.toString() : failure.getMessage();
+        String lower = detail.toLowerCase(Locale.ROOT);
+        String suggestion = lower.contains("login") || lower.contains("password") || lower.contains("authentication")
+                ? "Revisá usuario y contraseña."
+                : lower.contains("timeout") || lower.contains("refused") || lower.contains("connect")
+                ? "Revisá servidor, puerto, red y que el motor acepte conexiones."
+                : lower.contains("certificate") || lower.contains("ssl") || lower.contains("tls")
+                ? "Revisá TLS y el certificado del servidor."
+                : "Revisá que el motor, la instancia y los datos de conexión sean correctos.";
+        return suggestion + " Detalle: " + detail;
     }
 
     private void accept() {
