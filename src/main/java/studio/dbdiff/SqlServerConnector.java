@@ -416,8 +416,8 @@ public final class SqlServerConnector implements DatabaseConnector {
         List<RowDiff.Column> columns = readColumns(key), peerColumns = peer.readColumns(key);
         List<RowDiff.Column> primaryKey = readPrimaryKey(key), peerPrimaryKey = peer.readPrimaryKey(key);
         if (columns.isEmpty()) throw new SQLException("Table has no visible columns or SELECT permission is missing.");
-        if (!columns.equals(peerColumns)) throw new SQLException("Skipped: table columns differ between endpoints. Compare the complete column definitions first.");
-        if (!primaryKey.equals(peerPrimaryKey)) throw new SQLException("Skipped: primary keys differ between endpoints. Compare the primary key definitions first.");
+        if (!compatibleColumns(columns, peerColumns)) throw new SQLException("Skipped: table columns have different names, order, or incompatible data types between endpoints.");
+        if (!compatiblePrimaryKeys(primaryKey, peerPrimaryKey)) throw new SQLException("Skipped: primary key columns or ordering types differ between endpoints.");
         if (primaryKey.isEmpty()) throw new SQLException("Skipped: table has no primary key; rows cannot be matched safely.");
         for (RowDiff.Column column : columns) if (!safeComparable(column.type()))
             throw new SQLException("Skipped: column " + column.name() + " has unsupported comparison type " + column.type() + ".");
@@ -465,8 +465,35 @@ public final class SqlServerConnector implements DatabaseConnector {
             }
         }
         boolean truncated = counts[0] + counts[1] + counts[3] > changes.size();
+        List<String> warnings = new ArrayList<>();
+        if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey))
+            warnings.add("La metadata de columnas difiere entre los extremos; revisá los tipos y largos del destino antes de exportar cambios de filas.");
+        if (truncated) warnings.add("Se conservaron solo los primeros " + maxChanges + " cambios de fila para exportar.");
         return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
-                truncated ? "Only the first " + maxChanges + " row changes are retained; export is limited to those rows." : "");
+                String.join(" ", warnings));
+    }
+
+    private static boolean compatibleColumns(List<RowDiff.Column> source, List<RowDiff.Column> target) {
+        if (source.size() != target.size()) return false;
+        for (int i = 0; i < source.size(); i++) {
+            RowDiff.Column left = source.get(i), right = target.get(i);
+            if (!left.name().equalsIgnoreCase(right.name()) || !compatibleRowType(left.type(), right.type())) return false;
+        }
+        return true;
+    }
+
+    private static boolean compatiblePrimaryKeys(List<RowDiff.Column> source, List<RowDiff.Column> target) {
+        if (source.size() != target.size()) return false;
+        for (int i = 0; i < source.size(); i++) {
+            RowDiff.Column left = source.get(i), right = target.get(i);
+            if (!left.name().equalsIgnoreCase(right.name()) || !compatibleRowType(left.type(), right.type())) return false;
+        }
+        return true;
+    }
+
+    private static boolean compatibleRowType(String left, String right) {
+        if (left.equalsIgnoreCase(right)) return true;
+        return isText(left) && isText(right) || isNumeric(left) && isNumeric(right);
     }
 
     private long countRows(SchemaObject.Key key) throws SQLException {

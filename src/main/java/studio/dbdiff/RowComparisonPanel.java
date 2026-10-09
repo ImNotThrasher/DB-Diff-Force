@@ -104,7 +104,8 @@ final class RowComparisonPanel extends JPanel {
         long identical = result.changes().stream().filter(change -> change.status() == RowDiff.Status.IDENTICAL).count();
         String primaryKey = result.primaryKey().stream().map(RowDiff.Column::name).collect(Collectors.joining(", "));
         summary.setText(result.table().name() + " · " + result.changes().size() + " filas · " + (additions + removals + modifications) + " con diferencias");
-        summary.setToolTipText("Clave primaria: " + primaryKey + " · " + result.matchedRows() + " claves coincidentes");
+        summary.setToolTipText("Clave primaria: " + primaryKey + " · " + result.matchedRows() + " claves coincidentes"
+                + (result.warning().isBlank() ? "" : " · " + result.warning()));
         export.setEnabled(additions + removals + modifications > 0);
         resultContent.removeAll();
 
@@ -132,6 +133,12 @@ final class RowComparisonPanel extends JPanel {
             searchField = new PlaceholderTextField("Buscar en todas las columnas…"); searchField.putClientProperty("JTextField.leadingIcon", UiIcons.themed(UiIcons.SEARCH, 16)); searchField.setToolTipText("Filtrar las filas visibles por cualquier valor");
             search.add(searchField, BorderLayout.CENTER);
             toolbar.add(filters, BorderLayout.NORTH); toolbar.add(search, BorderLayout.CENTER);
+            if (!result.warning().isBlank()) {
+                JLabel warning = new JLabel("⚠ Hay diferencias de metadata; revisá el destino antes de exportar cambios de filas.");
+                warning.setToolTipText(result.warning());
+                warning.setForeground(javax.swing.UIManager.getColor("Component.warning.focusedBorderColor"));
+                toolbar.add(warning, BorderLayout.SOUTH);
+            }
             resultContent.add(toolbar, BorderLayout.NORTH);
 
             String[] headers = new String[result.columns().size() + 1];
