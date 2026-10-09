@@ -34,6 +34,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 import java.util.function.IntConsumer;
 
 import javax.swing.BorderFactory;
@@ -116,7 +118,7 @@ public final class Main {
     private DiffEngine.Result selectedSchemaResult;
     private long selectionRequest;
     private long rowComparisonRequest;
-    private long comparisonRequest;
+    private volatile long comparisonRequest;
     private long elapsedStartedAtNanos;
     private String elapsedDetail = "";
     private final javax.swing.Timer elapsedTimer = new javax.swing.Timer(1000, event -> refreshElapsedStatus());
@@ -376,10 +378,13 @@ public final class Main {
         worker.submit(() -> {
             try {
                 List<SchemaObject> sourceCatalog = refreshCatalog ? sourceConnector.listObjects() : existingSourceCatalog;
+                ensureComparisonCurrent(request);
                 List<SchemaObject> targetCatalog = refreshCatalog ? targetConnector.listObjects() : existingTargetCatalog;
+                ensureComparisonCurrent(request);
                 DependencyReport refreshedSource = refreshCatalog && sourceConnector instanceof DatabaseConnector
                         ? safeDependencyReport(sourceConnector) : sourceDependencyReport;
                 DependencyReport refreshedTarget = refreshCatalog ? safeDependencyReport(targetConnector) : targetDependencyReport;
+                ensureComparisonCurrent(request);
                 Set<SchemaObject.Key> sourceCache = refreshCatalog ? Set.of() : loadedA;
                 Set<SchemaObject.Key> targetCache = refreshCatalog ? Set.of() : loadedB;
                 int totalObjects = countSelected(sourceCatalog, kinds, selectedKeys) + countSelected(targetCatalog, kinds, selectedKeys);
@@ -395,8 +400,10 @@ public final class Main {
                             showProgress(value, totalObjects, "Leyendo definiciones");
                     });
                 };
-                List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, sourceCache, progress);
-                List<SchemaObject> b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, targetCache, progress);
+                BooleanSupplier current = () -> request == comparisonRequest;
+                List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, sourceCache, progress, current);
+                List<SchemaObject> b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, targetCache, progress, current);
+                ensureComparisonCurrent(request);
                 List<DiffEngine.Result> results = new DiffEngine().compare(a, b, kinds, selectedKeys);
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) return;
@@ -424,15 +431,23 @@ public final class Main {
                 .filter(object -> selected.isEmpty() || selected.contains(object.key())).count();
     }
 
+    private void ensureComparisonCurrent(long request) {
+        if (Thread.currentThread().isInterrupted()) throw new CancellationException();
+        if (request != comparisonRequest) throw new CancellationException();
+    }
+
     private static List<SchemaObject> loadSelected(SchemaSource connector, List<SchemaObject> catalog, Set<SchemaObject.Kind> kinds,
                                                    Set<SchemaObject.Key> selected, Set<SchemaObject.Key> cachedKeys,
-                                                   IntConsumer progress) throws SQLException {
+                                                   IntConsumer progress, BooleanSupplier current) throws SQLException {
         // El catálogo solo trae nombres; las definiciones se cargan bajo demanda y
         // las ya leídas se reutilizan para evitar consultas repetidas al servidor.
         List<SchemaObject> result = new ArrayList<>();
-        for (SchemaObject object : catalog) if (kinds.contains(object.key().kind()) && (selected.isEmpty() || selected.contains(object.key()))) {
-            result.add(cachedKeys.contains(object.key()) ? object : connector.loadObject(object.key()));
-            progress.accept(1);
+        for (SchemaObject object : catalog) {
+            if (!current.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+            if (kinds.contains(object.key().kind()) && (selected.isEmpty() || selected.contains(object.key()))) {
+                result.add(cachedKeys.contains(object.key()) ? object : connector.loadObject(object.key()));
+                progress.accept(1);
+            }
         }
         return result;
     }
@@ -486,9 +501,11 @@ public final class Main {
     }
 
     private void refreshResults() {
-        if (!compared) { showCatalog(); return; }
+        if (!compared && !schemaComparisonRunning) { showCatalog(); return; }
         // compare(false) reutiliza las definiciones en caché y solo consulta las
-        // de los tipos que se acaban de activar por primera vez.
+        // de los tipos que se acaban de activar por primera vez. Al cambiar el
+        // filtro durante una carga, invalida el recorrido anterior; ese worker
+        // se detiene antes de iniciar la siguiente consulta de objeto.
         compare(false);
     }
 
