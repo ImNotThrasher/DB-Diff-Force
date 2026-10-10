@@ -166,7 +166,7 @@ final class RowComparisonPanel extends JPanel {
                     if (row < 0 || column < 0) return null;
                     Object value = getValueAt(row, column);
                     if (value instanceof FieldValue field) return field.tooltip();
-                    return "Estado de la fila";
+                    return statusTooltip(String.valueOf(value));
                 }
             };
             changesTable.setToolTipText("");
@@ -278,10 +278,20 @@ final class RowComparisonPanel extends JPanel {
 
     private static String statusLabel(RowDiff.Status status) {
         return switch (status) {
-            case SOURCE_ONLY -> "Agregada · solo origen";
-            case TARGET_ONLY -> "Quitada · solo destino";
+            case SOURCE_ONLY -> "Solo origen";
+            case TARGET_ONLY -> "Solo destino";
             case DIFFERENT -> "Modificada";
             case IDENTICAL -> "Igual";
+        };
+    }
+
+    private static String statusTooltip(String status) {
+        return switch (status) {
+            case "Solo origen" -> "Solo en origen · agregar al destino (INSERT).";
+            case "Solo destino" -> "Solo en destino · quitar del destino (DELETE).";
+            case "Modificada" -> "La fila existe en ambos lados con valores distintos.";
+            case "Igual" -> "La fila es idéntica en origen y destino.";
+            default -> "Estado de la fila";
         };
     }
 
@@ -321,8 +331,9 @@ final class RowComparisonPanel extends JPanel {
         int maximum = com.formdev.flatlaf.util.UIScale.scale(320);
         int padding = com.formdev.flatlaf.util.UIScale.scale(20);
         int statusWidth = Math.max(headerMetrics.stringWidth("Estado"),
-                Math.max(cellMetrics.stringWidth("Agregada · solo origen"), cellMetrics.stringWidth("Quitada · solo destino"))) + padding;
-        int fittedStatusWidth = Math.min(maximum, Math.max(minimum, statusWidth));
+                Math.max(cellMetrics.stringWidth("Solo origen"), Math.max(cellMetrics.stringWidth("Solo destino"),
+                        Math.max(cellMetrics.stringWidth("Modificada"), cellMetrics.stringWidth("Igual"))))) + padding;
+        int fittedStatusWidth = Math.min(maximum, Math.max(com.formdev.flatlaf.util.UIScale.scale(82), statusWidth));
         table.getColumnModel().getColumn(0).setPreferredWidth(fittedStatusWidth);
         table.getColumnModel().getColumn(0).setWidth(fittedStatusWidth);
 
@@ -363,8 +374,8 @@ final class RowComparisonPanel extends JPanel {
             else {
                 int modelRow = table.convertRowIndexToModel(row);
                 String status = String.valueOf(table.getModel().getValueAt(modelRow, 0));
-                if (status.startsWith("Agregada")) setBackground(ThemePalette.addedRow(dark));
-                else if (status.startsWith("Quitada")) setBackground(ThemePalette.removedRow(dark));
+                if (status.startsWith("Solo origen")) setBackground(ThemePalette.addedRow(dark));
+                else if (status.startsWith("Solo destino")) setBackground(ThemePalette.removedRow(dark));
                 else if (status.startsWith("Igual")) setBackground(table.getBackground());
                 else if (field.different()) setBackground(ThemePalette.modifiedBackground(dark));
                 else setBackground(table.getBackground());
@@ -411,8 +422,8 @@ final class RowComparisonPanel extends JPanel {
             Component cell = super.getTableCellRendererComponent(table, value, selected, focus, row, column);
             if (!selected) {
                 String status = String.valueOf(value);
-                if (status.startsWith("Agregada")) cell.setBackground(ThemePalette.addedRow(dark));
-                else if (status.startsWith("Quitada")) cell.setBackground(ThemePalette.removedRow(dark));
+                if (status.startsWith("Solo origen")) cell.setBackground(ThemePalette.addedRow(dark));
+                else if (status.startsWith("Solo destino")) cell.setBackground(ThemePalette.removedRow(dark));
                 else if (status.startsWith("Igual")) cell.setBackground(table.getBackground());
                 else cell.setBackground(ThemePalette.modifiedBackground(dark));
             }
