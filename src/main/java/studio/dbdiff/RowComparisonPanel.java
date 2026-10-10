@@ -21,6 +21,7 @@ import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +31,9 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-/** Row-level comparison with status filters and per-field values in one table. */
+/** Row-level comparison with status filters and per-field values in one table.
+ * Green and red describe add/remove actions on the destination; object-list markers describe which side has an object.
+ */
 final class RowComparisonPanel extends JPanel {
     record ExportOptions(boolean inserts, boolean updates, boolean deletes) { }
 
@@ -49,8 +52,9 @@ final class RowComparisonPanel extends JPanel {
     private RowDiff.Status activeFilter;
     private boolean dark;
 
-    /** Cell presentation keeps source and destination values available to filters and tooltips. */
-    private record FieldValue(String text, String tooltip, boolean different) {
+    /** Preserve full values for filtering and tooltips when the fixed-height renderer abbreviates them. */
+    private record FieldValue(String text, String tooltip, boolean different, String source, String target) {
+        FieldValue(String text, String tooltip, boolean different) { this(text, tooltip, different, null, null); }
         @Override public String toString() { return text; }
     }
 
@@ -169,10 +173,8 @@ final class RowComparisonPanel extends JPanel {
             changesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             changesTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
             changesTable.setFillsViewportHeight(true);
-            changesTable.setRowHeight(46);
-            changesTable.getColumnModel().getColumn(0).setPreferredWidth(165);
-            for (int column = 1; column < headers.length; column++)
-                changesTable.getColumnModel().getColumn(column).setPreferredWidth(180);
+            changesTable.setRowHeight(com.formdev.flatlaf.util.UIScale.scale(34));
+            sizeColumnsToContent(changesTable);
             changesTable.getColumnModel().getColumn(0).setCellRenderer(new StatusCellRenderer(dark));
             for (int column = 1; column < headers.length; column++)
                 changesTable.getColumnModel().getColumn(column).setCellRenderer(new FieldCellRenderer(dark));
@@ -292,7 +294,7 @@ final class RowComparisonPanel extends JPanel {
             case DIFFERENT -> {
                 boolean different = !Objects.deepEquals(change.source().get(column.name()), change.target().get(column.name()));
                 yield different
-                        ? new FieldValue("O: " + source + " → D: " + target, "Origen: " + source + "\nDestino: " + target, true)
+                        ? new FieldValue("O: " + source + " → D: " + target, "Origen: " + source + "\nDestino: " + target, true, source, target)
                         : new FieldValue(source, "Igual en origen y destino: " + source, false);
             }
             case IDENTICAL -> new FieldValue(source, "Igual en origen y destino: " + source, false);
@@ -312,13 +314,50 @@ final class RowComparisonPanel extends JPanel {
         return text.length() > 512 ? text.substring(0, 509) + "…" : text;
     }
 
-    private static final class FieldCellRenderer extends javax.swing.JTextArea implements javax.swing.table.TableCellRenderer {
+    private static void sizeColumnsToContent(JTable table) {
+        FontMetrics headerMetrics = table.getTableHeader().getFontMetrics(table.getTableHeader().getFont());
+        FontMetrics cellMetrics = table.getFontMetrics(table.getFont());
+        int minimum = com.formdev.flatlaf.util.UIScale.scale(92);
+        int maximum = com.formdev.flatlaf.util.UIScale.scale(320);
+        int padding = com.formdev.flatlaf.util.UIScale.scale(20);
+        int statusWidth = Math.max(headerMetrics.stringWidth("Estado"),
+                Math.max(cellMetrics.stringWidth("Agregada · solo origen"), cellMetrics.stringWidth("Quitada · solo destino"))) + padding;
+        int fittedStatusWidth = Math.min(maximum, Math.max(minimum, statusWidth));
+        table.getColumnModel().getColumn(0).setPreferredWidth(fittedStatusWidth);
+        table.getColumnModel().getColumn(0).setWidth(fittedStatusWidth);
+
+        for (int column = 1; column < table.getColumnCount(); column++) {
+            String heading = table.getColumnName(column);
+            int preferred = Math.max(minimum, headerMetrics.stringWidth(heading) + padding);
+            // Sample a bounded number of rows so measuring a large result stays inexpensive.
+            int sampleRows = Math.min(table.getModel().getRowCount(), 200);
+            for (int row = 0; row < sampleRows && preferred < maximum; row++) {
+                Object value = table.getModel().getValueAt(row, column);
+                String text = value == null ? "" : value.toString();
+                int sampleEnd = text.offsetByCodePoints(0, Math.min(text.codePointCount(0, text.length()), 80));
+                preferred = Math.max(preferred, Math.min(maximum, cellMetrics.stringWidth(text.substring(0, sampleEnd)) + padding));
+            }
+            int fittedWidth = Math.min(maximum, preferred);
+            table.getColumnModel().getColumn(column).setPreferredWidth(fittedWidth);
+            table.getColumnModel().getColumn(column).setWidth(fittedWidth);
+        }
+    }
+
+    private static final class FieldCellRenderer extends DefaultTableCellRenderer {
         private final boolean dark;
-        FieldCellRenderer(boolean dark) { this.dark = dark; setLineWrap(true); setWrapStyleWord(true); setOpaque(true); setBorder(new EmptyBorder(3, 6, 3, 6)); }
+        FieldCellRenderer(boolean dark) { this.dark = dark; setOpaque(true); setBorder(new EmptyBorder(3, 6, 3, 6)); }
         @Override public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
                                                                   boolean focus, int row, int column) {
             FieldValue field = value instanceof FieldValue cell ? cell : new FieldValue(String.valueOf(value), "", false);
-            setText(field.text()); setFont(table.getFont());
+            super.getTableCellRendererComponent(table, field.text(), selected, focus, row, column);
+            setFont(table.getFont());
+            int availableWidth = Math.max(0, table.getCellRect(row, column, false).width
+                    - com.formdev.flatlaf.util.UIScale.scale(16));
+            FontMetrics metrics = getFontMetrics(getFont());
+            setText(field.different() && field.source() != null
+                    ? comparisonText(field.source(), field.target(), availableWidth, metrics)
+                    : ellipsize(field.text(), availableWidth, metrics));
+            setToolTipText(field.tooltip().isBlank() ? null : field.tooltip());
             setForeground(selected ? table.getSelectionForeground() : table.getForeground());
             if (selected) setBackground(table.getSelectionBackground());
             else {
@@ -331,6 +370,36 @@ final class RowComparisonPanel extends JPanel {
                 else setBackground(table.getBackground());
             }
             return this;
+        }
+
+        private static String comparisonText(String source, String target, int width, FontMetrics metrics) {
+            String separator = " → ";
+            int valueWidth = Math.max(0, width - metrics.stringWidth(separator));
+            int sourceWidth = valueWidth / 2;
+            int targetWidth = valueWidth - sourceWidth;
+            return labeledValue("O: ", source, sourceWidth, metrics) + separator
+                    + labeledValue("D: ", target, targetWidth, metrics);
+        }
+
+        private static String labeledValue(String label, String value, int width, FontMetrics metrics) {
+            int labelWidth = metrics.stringWidth(label);
+            if (width <= labelWidth) return ellipsize(label, width, metrics);
+            return label + ellipsize(value, width - labelWidth, metrics);
+        }
+
+        private static String ellipsize(String text, int width, FontMetrics metrics) {
+            String ellipsis = "…";
+            if (width <= 0) return "";
+            if (metrics.stringWidth(text) <= width) return text;
+            if (metrics.stringWidth(ellipsis) > width) return "";
+            int low = 0, high = text.codePointCount(0, text.length());
+            while (low < high) {
+                int middle = (low + high + 1) / 2;
+                String candidate = text.substring(0, text.offsetByCodePoints(0, middle)) + ellipsis;
+                if (metrics.stringWidth(candidate) <= width) low = middle;
+                else high = middle - 1;
+            }
+            return text.substring(0, text.offsetByCodePoints(0, low)).stripTrailing() + ellipsis;
         }
     }
 
