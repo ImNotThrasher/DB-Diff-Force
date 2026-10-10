@@ -110,10 +110,10 @@ public final class Main {
     private String codeFontFamily = "";
     private boolean rememberWindowBounds;
     private boolean startMaximized;
+    private boolean keepRowComparisonExpanded;
     private JPanel headerPanel, leftPanel;
     private JSplitPane workspaceSplit;
     private JSplitPane comparisonSplit;
-    private JButton layoutButton;
     private JButton compareButton, exportButton;
     private final Set<SchemaObject.Key> comparedKeys = new TreeSet<>();
     private final Set<SchemaObject.Key> loadedSourceKeys = ConcurrentHashMap.newKeySet();
@@ -176,7 +176,7 @@ public final class Main {
         compareButton = button("Actualizar", false); compareButton.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compareButton.setIconTextGap(7); compareButton.setToolTipText("Volver a leer los objetos; con selección múltiple, actualizar los seleccionados."); compareButton.addActionListener(e -> compare(true));
         exportButton = button("Exportar esquema", false); exportButton.setIcon(UiIcons.themed(UiIcons.EXPORT, 16)); exportButton.setIconTextGap(7); exportButton.addActionListener(e -> export());
         JButton settings = button("Configuración", false); settings.setIcon(UiIcons.themed(UiIcons.SETTINGS, 16)); settings.setIconTextGap(6);
-        settings.setToolTipText("Tema y fuente del comparador"); settings.addActionListener(e -> showSettings());
+        settings.setToolTipText("Apariencia, ventana y comportamiento del comparador"); settings.addActionListener(e -> showSettings());
         actions.add(connect); actions.add(compareButton); actions.add(exportButton); actions.add(settings); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
     }
 
@@ -185,10 +185,9 @@ public final class Main {
         JPanel left = new JPanel(new BorderLayout(0, 10)); leftPanel = left; left.setBorder(new EmptyBorder(16, 16, 16, 12)); left.setPreferredSize(new Dimension(370, 100));
         JPanel controls = new JPanel(new BorderLayout(6, 0)); controls.setOpaque(false);
         JLabel objectsHeading = new JLabel("OBJETOS"); objectsHeading.putClientProperty("FlatLaf.styleClass", "h3");
-        JPanel leftActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0)); leftActions.setOpaque(false);
         JButton kinds = new JButton("Tipos ▾"); kinds.addActionListener(e -> kindMenu(kinds));
-        layoutButton = new JButton(); layoutButton.addActionListener(e -> { stackedLayout = !stackedLayout; saveUiPreferences(); updateLayout(); });
-        leftActions.add(layoutButton); leftActions.add(kinds); controls.add(objectsHeading, BorderLayout.NORTH); controls.add(leftActions, BorderLayout.SOUTH);
+        JPanel kindAction = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0)); kindAction.setOpaque(false); kindAction.add(kinds);
+        controls.add(objectsHeading, BorderLayout.NORTH); controls.add(kindAction, BorderLayout.SOUTH);
         resultList.setCellRenderer(new ResultRenderer()); resultList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION); resultList.setFixedCellHeight(34); resultList.addListSelectionListener(this::selectResult); resultList.setToolTipText("");
         JScrollPane listScroll = new JScrollPane(resultList);
         objectSearch.setToolTipText("Buscar objetos por nombre o tipo");
@@ -974,8 +973,6 @@ public final class Main {
 
     private void updateLayout() {
         if (workspaceSplit == null || leftPanel == null) return;
-        layoutButton.setText(stackedLayout ? "Lista lateral" : "Lista superior");
-        layoutButton.setToolTipText(stackedLayout ? "Mostrar objetos en un panel lateral" : "Mostrar objetos en una franja superior");
         workspaceSplit.setOrientation(stackedLayout ? JSplitPane.VERTICAL_SPLIT : JSplitPane.HORIZONTAL_SPLIT);
         if (stackedLayout) {
             leftPanel.setPreferredSize(new Dimension(100, 195));
@@ -996,8 +993,9 @@ public final class Main {
             stackedLayout = Boolean.parseBoolean(values.getProperty("stackedLayout", "false"));
             String configuredFont = values.getProperty("codeFontFamily", "");
             codeFontFamily = DiffCodeEditor.installedFamily(configuredFont) == null ? "" : configuredFont;
-            rememberWindowBounds = Boolean.parseBoolean(values.getProperty("rememberWindowBounds", "false"));
-            startMaximized = Boolean.parseBoolean(values.getProperty("startMaximized", "false"));
+            rememberWindowBounds = Boolean.parseBoolean(values.getProperty("rememberWindowBounds", "true"));
+            startMaximized = Boolean.parseBoolean(values.getProperty("startMaximized", "true"));
+            keepRowComparisonExpanded = Boolean.parseBoolean(values.getProperty("keepRowComparisonExpanded", "false"));
             try { codeFontSize = Math.clamp(Integer.parseInt(values.getProperty("codeFontSize", "13")), 10, 24); }
             catch (NumberFormatException ignored) { codeFontSize = 13; }
         } catch (IOException ignored) { }
@@ -1006,7 +1004,7 @@ public final class Main {
     private void saveUiPreferences() {
         try {
             Files.createDirectories(UI_PREFERENCES.getParent());
-            java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout)); values.setProperty("codeFontSize", Integer.toString(codeFontSize)); values.setProperty("codeFontFamily", codeFontFamily); values.setProperty("rememberWindowBounds", Boolean.toString(rememberWindowBounds)); values.setProperty("startMaximized", Boolean.toString(startMaximized));
+            java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout)); values.setProperty("codeFontSize", Integer.toString(codeFontSize)); values.setProperty("codeFontFamily", codeFontFamily); values.setProperty("rememberWindowBounds", Boolean.toString(rememberWindowBounds)); values.setProperty("startMaximized", Boolean.toString(startMaximized)); values.setProperty("keepRowComparisonExpanded", Boolean.toString(keepRowComparisonExpanded));
             try (var output = Files.newOutputStream(UI_PREFERENCES)) { values.store(output, AppInfo.NAME + " appearance"); }
         } catch (IOException ex) { connectionStatus.setText("No se pudo guardar la apariencia: " + ex.getMessage()); }
     }
@@ -1023,10 +1021,13 @@ public final class Main {
     }
 
     private void showSettings() {
-        SettingsDialog.Selection selected = SettingsDialog.show(frame, theme, codeFontFamily, codeFontSize, rememberWindowBounds, startMaximized);
+        SettingsDialog.Selection selected = SettingsDialog.show(frame, theme, codeFontFamily, codeFontSize, rememberWindowBounds, startMaximized,
+                stackedLayout, keepRowComparisonExpanded);
         if (selected == null) return;
         theme = selected.theme(); codeFontFamily = selected.fontFamily(); codeFontSize = selected.fontSize();
         rememberWindowBounds = selected.rememberWindowBounds(); startMaximized = selected.startMaximized();
+        stackedLayout = selected.stackedLayout(); keepRowComparisonExpanded = selected.keepRowComparisonExpanded();
+        updateLayout();
         saveUiPreferences(); applyTheme();
     }
 
