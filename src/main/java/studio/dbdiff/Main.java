@@ -111,6 +111,7 @@ public final class Main {
     private boolean rememberWindowBounds;
     private boolean startMaximized;
     private boolean keepRowComparisonExpanded;
+    private boolean rememberLastComparison;
     private JPanel headerPanel, leftPanel;
     private JSplitPane workspaceSplit;
     private JSplitPane comparisonSplit;
@@ -119,6 +120,7 @@ public final class Main {
     private final Set<SchemaObject.Key> loadedSourceKeys = ConcurrentHashMap.newKeySet();
     private final Set<SchemaObject.Key> loadedTargetKeys = ConcurrentHashMap.newKeySet();
     private DiffEngine.Result selectedSchemaResult;
+    private ConnectionDialog.Selection currentSelection;
     private long selectionRequest;
     private long rowComparisonRequest;
     private volatile long comparisonRequest;
@@ -159,7 +161,11 @@ public final class Main {
         applyTheme(); frame.setVisible(true);
         SwingUtilities.invokeLater(() -> {
             comparisonSplit.setDividerLocation(.89);
-            connect();
+            // The opt-in restore path uses the same connection dialog so stale credentials or files remain editable.
+            LastComparisonPreferences.SavedComparison last = rememberLastComparison
+                    ? LastComparisonPreferences.load().orElse(null) : null;
+            if (last == null) connect();
+            else connect(last, true);
         });
     }
 
@@ -246,7 +252,11 @@ public final class Main {
     }
 
     private void connect() {
-        ConnectionDialog.Selection selection = ConnectionDialog.showDialog(frame, theme);
+        connect(null, true);
+    }
+
+    private void connect(LastComparisonPreferences.SavedComparison lastComparison, boolean attemptAutoConnect) {
+        ConnectionDialog.Selection selection = ConnectionDialog.showDialog(frame, theme, lastComparison, attemptAutoConnect);
         if (selection == null) {
             if (source == null || target == null) {
                 comparisonView.showMessage("Conectá dos bases para empezar a comparar.");
@@ -289,6 +299,8 @@ public final class Main {
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) { prepared.close(); return; }
                     closeConnectors();
+                    currentSelection = selection;
+                    if (rememberLastComparison) saveLastComparison(selection);
                     source = prepared.source(); target = prepared.target();
                     sourceDependencyReport = prepared.sourceDependencies(); targetDependencyReport = prepared.targetDependencies();
                     sourceDependencies = sourceDependencyReport.dependencies(); targetDependencies = targetDependencyReport.dependencies();
@@ -308,6 +320,8 @@ public final class Main {
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) return;
                     setBusy(false, "No se pudo preparar la comparación"); error("Error al conectar o cargar el origen", ex);
+                    // A basic connection test can pass while catalog loading fails; reopen the saved settings for correction.
+                    if (selection.autoRestored()) connect(LastComparisonPreferences.SavedComparison.from(selection), false);
                 });
             } finally {
                 selection.destination().clearPassword();
@@ -356,6 +370,11 @@ public final class Main {
 
     private static String endpointAddress(Endpoint endpoint) {
         return endpoint.host() + ":" + endpoint.port();
+    }
+
+    private void saveLastComparison(ConnectionDialog.Selection selection) {
+        try { LastComparisonPreferences.save(selection); }
+        catch (IOException ex) { connectionStatus.setText("No se pudo recordar la última comparación: " + ex.getMessage()); }
     }
 
     private record PreparedComparison(SchemaSource source, DatabaseConnector target,
@@ -999,6 +1018,7 @@ public final class Main {
             rememberWindowBounds = Boolean.parseBoolean(values.getProperty("rememberWindowBounds", "true"));
             startMaximized = Boolean.parseBoolean(values.getProperty("startMaximized", "true"));
             keepRowComparisonExpanded = Boolean.parseBoolean(values.getProperty("keepRowComparisonExpanded", "false"));
+            rememberLastComparison = Boolean.parseBoolean(values.getProperty("rememberLastComparison", "false"));
             try { codeFontSize = Math.clamp(Integer.parseInt(values.getProperty("codeFontSize", "13")), 10, 24); }
             catch (NumberFormatException ignored) { codeFontSize = 13; }
         } catch (IOException ignored) { }
@@ -1007,7 +1027,7 @@ public final class Main {
     private void saveUiPreferences() {
         try {
             Files.createDirectories(UI_PREFERENCES.getParent());
-            java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout)); values.setProperty("codeFontSize", Integer.toString(codeFontSize)); values.setProperty("codeFontFamily", codeFontFamily); values.setProperty("rememberWindowBounds", Boolean.toString(rememberWindowBounds)); values.setProperty("startMaximized", Boolean.toString(startMaximized)); values.setProperty("keepRowComparisonExpanded", Boolean.toString(keepRowComparisonExpanded));
+            java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout)); values.setProperty("codeFontSize", Integer.toString(codeFontSize)); values.setProperty("codeFontFamily", codeFontFamily); values.setProperty("rememberWindowBounds", Boolean.toString(rememberWindowBounds)); values.setProperty("startMaximized", Boolean.toString(startMaximized)); values.setProperty("keepRowComparisonExpanded", Boolean.toString(keepRowComparisonExpanded)); values.setProperty("rememberLastComparison", Boolean.toString(rememberLastComparison));
             try (var output = Files.newOutputStream(UI_PREFERENCES)) { values.store(output, AppInfo.NAME + " appearance"); }
         } catch (IOException ex) { connectionStatus.setText("No se pudo guardar la apariencia: " + ex.getMessage()); }
     }
@@ -1025,13 +1045,17 @@ public final class Main {
 
     private void showSettings() {
         SettingsDialog.Selection selected = SettingsDialog.show(frame, theme, codeFontFamily, codeFontSize, rememberWindowBounds, startMaximized,
-                stackedLayout, keepRowComparisonExpanded);
+                stackedLayout, keepRowComparisonExpanded, rememberLastComparison);
         if (selected == null) return;
         theme = selected.theme(); codeFontFamily = selected.fontFamily(); codeFontSize = selected.fontSize();
         rememberWindowBounds = selected.rememberWindowBounds(); startMaximized = selected.startMaximized();
         stackedLayout = selected.stackedLayout(); keepRowComparisonExpanded = selected.keepRowComparisonExpanded();
+        rememberLastComparison = selected.rememberLastComparison();
         updateLayout();
         saveUiPreferences(); applyTheme();
+        if (rememberLastComparison && currentSelection != null) saveLastComparison(currentSelection);
+        else if (!rememberLastComparison) try { LastComparisonPreferences.clear(); }
+        catch (IOException ex) { connectionStatus.setText("No se pudo borrar la última comparación guardada: " + ex.getMessage()); }
     }
 
     private Rectangle loadWindowBounds() {

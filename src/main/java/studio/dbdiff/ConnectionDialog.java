@@ -15,11 +15,15 @@ final class ConnectionDialog extends JDialog {
         SourceMode(String label) { this.label = label; }
         @Override public String toString() { return label; }
     }
-    record Selection(SourceMode mode, Endpoint origin, Endpoint destination, java.nio.file.Path sourceFolder) { }
+    record Selection(SourceMode mode, Endpoint origin, Endpoint destination, java.nio.file.Path sourceFolder, boolean autoRestored) { }
 
     private Selection selection;
     static Selection showDialog(JFrame owner, String theme) {
-        ConnectionDialog dialog = new ConnectionDialog(owner);
+        return showDialog(owner, theme, null, true);
+    }
+
+    static Selection showDialog(JFrame owner, String theme, LastComparisonPreferences.SavedComparison lastComparison, boolean attemptAutoConnect) {
+        ConnectionDialog dialog = new ConnectionDialog(owner, lastComparison, attemptAutoConnect);
         AppTheme.apply(dialog, null, theme);
         dialog.setVisible(true);
         return dialog.selection;
@@ -51,8 +55,12 @@ final class ConnectionDialog extends JDialog {
     private java.nio.file.Path selectedSourceFolder;
     private JButton connectButton;
     private final JTextField[] firstFields = new JTextField[2];
+    private boolean restoreCredentialsAvailable;
+    private boolean restorePasswordsAvailable = true;
+    private boolean autoRestored;
+    private String restoreNotice;
 
-    ConnectionDialog(JFrame owner) {
+    ConnectionDialog(JFrame owner, LastComparisonPreferences.SavedComparison lastComparison, boolean attemptAutoConnect) {
         super(owner, "Nueva comparación", true);
         setLayout(new BorderLayout(10, 10));
         engine.addActionListener(e -> {
@@ -96,8 +104,81 @@ final class ConnectionDialog extends JDialog {
         getRootPane().setDefaultButton(connectButton);
         getRootPane().registerKeyboardAction(event -> { autoConnectRequested = false; dispose(); },
                 KeyStroke.getKeyStroke("ESCAPE"), JComponent.WHEN_IN_FOCUSED_WINDOW);
-        updateSourceMode(); setMinimumSize(new Dimension(850, 480)); pack(); setLocationRelativeTo(owner);
-        SwingUtilities.invokeLater(() -> { if (isDisplayable()) firstFields[sourceMode.getSelectedItem() == SourceMode.DATABASE ? 0 : 1].requestFocusInWindow(); });
+        updateSourceMode();
+        if (lastComparison != null) restoreLastComparison(lastComparison);
+        setMinimumSize(new Dimension(850, 480)); pack(); setLocationRelativeTo(owner);
+        SwingUtilities.invokeLater(() -> {
+            if (!isDisplayable()) return;
+            if (restoreNotice != null) JOptionPane.showMessageDialog(this, restoreNotice,
+                    "Se requiere revisar la conexión", JOptionPane.INFORMATION_MESSAGE);
+            if (lastComparison != null && restoreCredentialsAvailable && attemptAutoConnect) {
+                autoRestored = true;
+                requestConnect();
+            } else if (lastComparison != null) passwords[lastComparison.mode() == SourceMode.DATABASE ? 0 : 1].requestFocusInWindow();
+            else firstFields[sourceMode.getSelectedItem() == SourceMode.DATABASE ? 0 : 1].requestFocusInWindow();
+        });
+    }
+
+    private void restoreLastComparison(LastComparisonPreferences.SavedComparison saved) {
+        // Restore non-secret fields first; passwords are recovered only from an exact matching saved profile.
+        sourceMode.setSelectedItem(saved.mode());
+        updateSourceMode();
+        applyingSavedProfile = true;
+        try { engine.setSelectedItem(saved.destination().engine()); }
+        finally { applyingSavedProfile = false; }
+        restoreCredentialsAvailable = true;
+        int firstSide = saved.mode() == SourceMode.DATABASE ? 0 : 1;
+        if (firstSide == 0) restoreEndpoint(0, saved.origin());
+        restoreEndpoint(1, saved.destination());
+        if (saved.mode() != SourceMode.DATABASE) {
+            if (saved.sourceFolder() == null) {
+                restoreCredentialsAvailable = false;
+                restoreNotice = "La última comparación no tenía una carpeta de origen válida. Elegí una carpeta para continuar.";
+            } else {
+                selectedSourceFolder = saved.sourceFolder();
+                sourceFolderField.setText(saved.sourceFolder().toString());
+                sourceFolderField.setToolTipText(saved.sourceFolder().toString());
+                if (!java.nio.file.Files.isDirectory(saved.sourceFolder())) {
+                    restoreCredentialsAvailable = false;
+                    restoreNotice = "La carpeta de origen guardada ya no existe. Elegí una carpeta válida para continuar.";
+                }
+            }
+        }
+        if (!restorePasswordsAvailable) {
+            String missing = "Se cargaron los datos de la última comparación. Ingresá las contraseñas que no estén guardadas y probá las conexiones.";
+            restoreNotice = restoreNotice == null ? missing : restoreNotice + "\n\n" + missing;
+        }
+    }
+
+    private void restoreEndpoint(int side, LastComparisonPreferences.SavedEndpoint saved) {
+        if (saved == null) { restoreCredentialsAvailable = false; restorePasswordsAvailable = false; return; }
+        fields[side][0].setText(saved.host());
+        fields[side][1].setText(Integer.toString(saved.port()));
+        fields[side][2].setText(saved.user());
+        tls[side].setSelected(saved.useTls());
+        preferredDatabase[side] = saved.database();
+        ConnectionProfile profile = savedProfiles.values().stream().filter(candidate ->
+                candidate.engine() == saved.engine() && candidate.host().equals(saved.host())
+                        && candidate.port() == saved.port() && candidate.database().equals(saved.database())
+                        && candidate.user().equals(saved.user()) && candidate.useTls() == saved.useTls())
+                .findFirst().orElse(null);
+        refreshSavedChoices(side, profile == null ? null : profile.name());
+        if (profile == null || !profile.rememberPassword()) {
+            // Keep the endpoint prefilled, but require the user to enter credentials before testing it.
+            restoreCredentialsAvailable = false;
+            restorePasswordsAvailable = false;
+            return;
+        }
+        try {
+            char[] stored = ConnectionCredentialStore.load(profile.name());
+            try { passwords[side].setText(new String(stored)); }
+            finally { Arrays.fill(stored, '\0'); }
+            rememberPasswords[side].setSelected(true);
+        } catch (Exception ex) {
+            restoreCredentialsAvailable = false;
+            restorePasswordsAvailable = false;
+            rememberPasswords[side].setSelected(false);
+        }
     }
 
     private JPanel buildDatabasePanel(int side) {
@@ -400,7 +481,7 @@ final class ConnectionDialog extends JDialog {
             }
             if (selectedMode != SourceMode.DATABASE && selectedSourceFolder == null)
                 throw new IllegalArgumentException("Seleccioná la carpeta del origen antes de continuar.");
-            selection = new Selection(selectedMode, origin, destination, selectedSourceFolder);
+            selection = new Selection(selectedMode, origin, destination, selectedSourceFolder, autoRestored);
             dispose();
         } catch (RuntimeException ex) {
             if (origin != null) origin.clearPassword();
