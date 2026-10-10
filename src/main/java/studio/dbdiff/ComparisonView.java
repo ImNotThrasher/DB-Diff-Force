@@ -107,7 +107,7 @@ public final class ComparisonView extends JPanel {
     }
 
     private JPanel headerPanel() {
-        JPanel panel = new JPanel(new BorderLayout(10, 4));
+        JPanel panel = new JPanel(new BorderLayout(10, 12));
         JPanel labels = new JPanel(new BorderLayout(0, 4)); labels.setOpaque(false);
         JPanel endpoints = new JPanel(new java.awt.GridLayout(1, 2, 12, 0));
         endpoints.add(endpointPanel("Origen", sourceEndpoint));
@@ -123,6 +123,7 @@ public final class ComparisonView extends JPanel {
         splitModeButton.addActionListener(e -> showMode(SPLIT)); unifiedModeButton.addActionListener(e -> showMode(UNIFIED));
         JPanel choices = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0)); choices.setOpaque(false); choices.add(splitModeButton); choices.add(unifiedModeButton);
         JPanel objectBar = new JPanel(new BorderLayout(8, 0));
+        objectBar.setBorder(new EmptyBorder(0, 0, 8, 0));
         objectBar.add(summary, BorderLayout.CENTER); objectBar.add(choices, BorderLayout.EAST);
         panel.setBorder(new EmptyBorder(2, 4, 4, 4)); panel.add(labels, BorderLayout.NORTH); panel.add(objectBar, BorderLayout.CENTER);
         return panel;
