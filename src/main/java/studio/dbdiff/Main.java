@@ -168,8 +168,11 @@ public final class Main {
         JPanel brand = new JPanel(new BorderLayout(12, 0)); brand.setOpaque(false);
         JLabel logo = new JLabel(UiIcons.themed(UiIcons.CONNECT, 46)); logo.setBorder(new EmptyBorder(0, 0, 0, 2));
         JLabel title = new JLabel(AppInfo.NAME); title.putClientProperty("FlatLaf.styleClass", "h2");
+        JLabel version = new JLabel("versión " + AppInfo.VERSION);
+        version.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.PLAIN, 11f));
+        version.setForeground(javax.swing.UIManager.getColor("Label.disabledForeground"));
         JPanel brandText = new JPanel(); brandText.setOpaque(false); brandText.setLayout(new BoxLayout(brandText, BoxLayout.Y_AXIS));
-        brandText.add(title);
+        brandText.add(title); brandText.add(version);
         brand.add(logo, BorderLayout.WEST); brand.add(brandText, BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4)); actions.setOpaque(false);
         JButton connect = button("Nueva comparación", true); connect.setIcon(UiIcons.themed(UiIcons.CONNECT, 16)); connect.setIconTextGap(7);  connect.setToolTipText("Elegir el modo de origen y configurar las conexiones."); connect.addActionListener(e -> connect());
