@@ -211,21 +211,21 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
                                                        BiConsumer<Long, Long> progress) throws SQLException {
         requireConnection();
-        if (!(peerConnector instanceof MySqlFamilyConnector peer) || peer.engine != engine) throw new SQLException("Row comparison requires matching database engines.");
+        if (!(peerConnector instanceof MySqlFamilyConnector peer) || peer.engine != engine) throw new SQLException(RowComparisonMessages.matchingEnginesRequired());
         peer.requireConnection();
-        if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException("Row comparison is available for tables only.");
+        if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException(RowComparisonMessages.tablesOnly());
         if (maxChanges < 1) throw new IllegalArgumentException("maxChanges must be positive");
         List<RowDiff.Column> columns = readColumns(key.name());
         List<RowDiff.Column> primaryKey = readPrimaryKey(key.name());
         List<RowDiff.Column> peerColumns = peer.readColumns(key.name());
         List<RowDiff.Column> peerPrimaryKey = peer.readPrimaryKey(key.name());
-        if (columns.isEmpty()) throw new SQLException("Table has no visible columns or SELECT permission is missing.");
-        if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey)) throw new SQLException("Skipped: table columns or primary key differ between endpoints. Compare table schema first.");
-        if (primaryKey.isEmpty()) throw new SQLException("Skipped: table has no primary key; rows cannot be matched safely.");
+        if (columns.isEmpty()) throw new SQLException(RowComparisonMessages.noVisibleColumns());
+        if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey)) throw new SQLException(RowComparisonMessages.columnsOrPrimaryKeyDiffer());
+        if (primaryKey.isEmpty()) throw new SQLException(RowComparisonMessages.primaryKeyRequired());
         for (RowDiff.Column column : columns) if (!safeComparable(column.type()))
-            throw new SQLException("Skipped: column " + column.name() + " has unsupported comparison type " + column.type() + ".");
+            throw new SQLException(RowComparisonMessages.unsupportedColumnType(column.name(), column.type()));
         for (RowDiff.Column column : primaryKey) if (!safeKey(column.type()))
-            throw new SQLException("Skipped: primary key column " + column.name() + " has unsupported ordering type " + column.type() + ".");
+            throw new SQLException(RowComparisonMessages.unsupportedPrimaryKeyType(column.name(), column.type()));
 
         progress.accept(0L, -1L);
         long totalRows = countRows(key.name()) + peer.countRows(key.name());
@@ -271,13 +271,13 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         }
         truncated = counts[0] + counts[1] + counts[3] > changes.size();
         return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
-                truncated ? "Only the first " + maxChanges + " row changes are retained; export is limited to those rows." : "");
+                truncated ? RowComparisonMessages.truncated(maxChanges) : "");
     }
 
     private long countRows(String table) throws SQLException {
         String sql = "SELECT COUNT(*) FROM " + quote(database) + "." + quote(table);
         try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
-            if (!rows.next()) throw new SQLException("Could not count rows in " + table);
+            if (!rows.next()) throw new SQLException(RowComparisonMessages.rowCountUnavailable(table));
             return rows.getLong(1);
         }
     }
@@ -325,7 +325,7 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         for (RowDiff.Column key : keys) { int c = compareValue(a.get(key.name()), b.get(key.name()), key.type()); if (c != 0) return c; } return 0;
     }
     private static int compareValue(Object a, Object b, String type) throws SQLException {
-        if (a == null || b == null) { if (a == b) return 0; throw new SQLException("Primary key unexpectedly contains NULL."); }
+        if (a == null || b == null) { if (a == b) return 0; throw new SQLException(RowComparisonMessages.primaryKeyContainsNull()); }
         if (Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric").contains(type)) return new java.math.BigDecimal(a.toString()).compareTo(new java.math.BigDecimal(b.toString()));
         // Para texto, el ORDER BY SQL usa CAST(... AS BINARY); comparar bytes
         // UTF-8 acá mantiene el mismo orden sin depender de la collation.
@@ -386,7 +386,7 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         if (connection != null) try { connection.close(); } catch (SQLException ignored) { }
         connection = null; database = null;
     }
-    private void requireConnection() throws SQLException { if (connection == null || connection.isClosed()) throw new SQLException("Not connected"); }
+    private void requireConnection() throws SQLException { if (connection == null || connection.isClosed()) throw new SQLException(RowComparisonMessages.notConnected()); }
     private static String quote(String value) { return "`" + value.replace("`", "``") + "`"; }
     private static String normalize(String value) {
         if (value == null) return "<definition unavailable: insufficient privileges or unsupported object>";

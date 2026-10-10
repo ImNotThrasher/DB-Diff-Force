@@ -409,20 +409,20 @@ public final class SqlServerConnector implements DatabaseConnector {
     @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
                                                        BiConsumer<Long, Long> progress) throws SQLException {
         requireConnection();
-        if (!(peerConnector instanceof SqlServerConnector peer)) throw new SQLException("Row comparison requires two SQL Server connections.");
+        if (!(peerConnector instanceof SqlServerConnector peer)) throw new SQLException(RowComparisonMessages.sqlServerConnectionsRequired());
         peer.requireConnection();
-        if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException("Row comparison is available for tables only.");
+        if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException(RowComparisonMessages.tablesOnly());
         if (maxChanges < 1) throw new IllegalArgumentException("maxChanges must be positive");
         List<RowDiff.Column> columns = readColumns(key), peerColumns = peer.readColumns(key);
         List<RowDiff.Column> primaryKey = readPrimaryKey(key), peerPrimaryKey = peer.readPrimaryKey(key);
-        if (columns.isEmpty()) throw new SQLException("Table has no visible columns or SELECT permission is missing.");
-        if (!compatibleColumns(columns, peerColumns)) throw new SQLException("Skipped: table columns have different names, order, or incompatible data types between endpoints.");
-        if (!compatiblePrimaryKeys(primaryKey, peerPrimaryKey)) throw new SQLException("Skipped: primary key columns or ordering types differ between endpoints.");
-        if (primaryKey.isEmpty()) throw new SQLException("Skipped: table has no primary key; rows cannot be matched safely.");
+        if (columns.isEmpty()) throw new SQLException(RowComparisonMessages.noVisibleColumns());
+        if (!compatibleColumns(columns, peerColumns)) throw new SQLException(RowComparisonMessages.incompatibleColumns());
+        if (!compatiblePrimaryKeys(primaryKey, peerPrimaryKey)) throw new SQLException(RowComparisonMessages.incompatiblePrimaryKey());
+        if (primaryKey.isEmpty()) throw new SQLException(RowComparisonMessages.primaryKeyRequired());
         for (RowDiff.Column column : columns) if (!safeComparable(column.type()))
-            throw new SQLException("Skipped: column " + column.name() + " has unsupported comparison type " + column.type() + ".");
+            throw new SQLException(RowComparisonMessages.unsupportedColumnType(column.name(), column.type()));
         for (RowDiff.Column column : primaryKey) if (!safeKey(column.type()))
-            throw new SQLException("Skipped: primary key column " + column.name() + " has unsupported ordering type " + column.type() + ".");
+            throw new SQLException(RowComparisonMessages.unsupportedPrimaryKeyType(column.name(), column.type()));
 
         progress.accept(0L, -1L);
         long totalRows = countRows(key) + peer.countRows(key);
@@ -468,7 +468,7 @@ public final class SqlServerConnector implements DatabaseConnector {
         List<String> warnings = new ArrayList<>();
         if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey))
             warnings.add("La metadata de columnas difiere entre los extremos; revisá los tipos y largos del destino antes de exportar cambios de filas.");
-        if (truncated) warnings.add("Se conservaron solo los primeros " + maxChanges + " cambios de fila para exportar.");
+        if (truncated) warnings.add(RowComparisonMessages.truncated(maxChanges));
         return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
                 String.join(" ", warnings));
     }
@@ -499,7 +499,7 @@ public final class SqlServerConnector implements DatabaseConnector {
     private long countRows(SchemaObject.Key key) throws SQLException {
         String sql = "SELECT COUNT_BIG(*) FROM " + qualified(database, key);
         try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
-            if (!rows.next()) throw new SQLException("Could not count rows in " + key.qualifiedName());
+            if (!rows.next()) throw new SQLException(RowComparisonMessages.rowCountUnavailable(key.qualifiedName()));
             return rows.getLong(1);
         }
     }
@@ -550,7 +550,7 @@ public final class SqlServerConnector implements DatabaseConnector {
         for (RowDiff.Column key : keys) {
             Object a = left.get(key.name()), b = right.get(key.name());
             int comparison;
-            if (a == null || b == null) { if (a == b) comparison = 0; else throw new SQLException("Primary key unexpectedly contains NULL."); }
+            if (a == null || b == null) { if (a == b) comparison = 0; else throw new SQLException(RowComparisonMessages.primaryKeyContainsNull()); }
             else if (isNumeric(key.type())) comparison = new BigDecimal(a.toString()).compareTo(new BigDecimal(b.toString()));
             else if (isText(key.type())) comparison = a.toString().compareTo(b.toString());
             else comparison = a.toString().compareTo(b.toString());
@@ -642,6 +642,6 @@ public final class SqlServerConnector implements DatabaseConnector {
         IndexParts(String name, boolean unique, String type, String filter, boolean disabled) { this.name = name; this.unique = unique; this.type = type; this.filter = filter; this.disabled = disabled; }
     }
 
-    private void requireConnection() throws SQLException { if (connection == null || connection.isClosed()) throw new SQLException("Not connected"); }
+    private void requireConnection() throws SQLException { if (connection == null || connection.isClosed()) throw new SQLException(RowComparisonMessages.notConnected()); }
     @Override public void close() { if (connection != null) try { connection.close(); } catch (SQLException ignored) { } connection = null; database = null; }
 }
