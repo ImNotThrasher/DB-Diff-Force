@@ -172,9 +172,11 @@ public final class ComparisonView extends JPanel {
         JPanel panel = new JPanel(new BorderLayout(0, 3));
         JLabel heading = new JLabel(title); heading.putClientProperty("FlatLaf.styleClass", "small");
         value.setMinimumSize(new java.awt.Dimension(0, value.getPreferredSize().height));
-        JPanel details = new JPanel(new BorderLayout(8, 0)); details.setOpaque(false);
-        details.add(value, BorderLayout.CENTER); details.add(profileBadge, BorderLayout.EAST);
-        panel.add(heading, BorderLayout.NORTH); panel.add(details, BorderLayout.CENTER);
+        JPanel headingLine = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+        headingLine.setOpaque(false);
+        headingLine.add(heading);
+        headingLine.add(profileBadge);
+        panel.add(headingLine, BorderLayout.NORTH); panel.add(value, BorderLayout.CENTER);
         return panel;
     }
 

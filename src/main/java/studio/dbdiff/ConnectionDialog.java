@@ -9,6 +9,15 @@ import java.util.*;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 final class ConnectionDialog extends JDialog {
+    private record ProfileColor(String name, String hex) {
+        Color color() { return Color.decode(hex); }
+        @Override public String toString() { return name; }
+    }
+    private static final List<ProfileColor> PROFILE_COLORS = List.of(
+            new ProfileColor("Gris", ConnectionProfile.DEFAULT_COLOR), new ProfileColor("Rojo", "#E05252"),
+            new ProfileColor("Naranja", "#E69735"), new ProfileColor("Amarillo", "#D6B832"),
+            new ProfileColor("Verde", "#36A269"), new ProfileColor("Azul", "#4389D1"),
+            new ProfileColor("Violeta", "#9A68C7"));
     enum SourceMode {
         DATABASE("Base de datos"), SNAPSHOT("Archivos SQL (CREATE)"), FLYWAY("Migraciones Flyway");
         private final String label;
@@ -360,13 +369,17 @@ final class ConnectionDialog extends JDialog {
         ConnectionProfile previous = savedProfiles.get(selectedName);
         JTextField name = new JTextField(initialName, 24);
         JTextField environment = new JTextField(previous == null ? "" : previous.environment(), 24);
-        Color[] markerColor = {previous == null ? Color.decode(ConnectionProfile.DEFAULT_COLOR) : previous.markerColor()};
-        JLabel colorSample = new JLabel(UiIcons.colorDot(markerColor[0], 18));
-        JButton chooseColor = new JButton("Elegir color…");
-        chooseColor.addActionListener(event -> {
-            Color chosen = JColorChooser.showDialog(this, "Color del perfil", markerColor[0]);
-            if (chosen != null) { markerColor[0] = chosen; colorSample.setIcon(UiIcons.colorDot(chosen, 18)); }
+        JComboBox<ProfileColor> profileColor = new JComboBox<>(PROFILE_COLORS.toArray(ProfileColor[]::new));
+        profileColor.setRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                                    boolean selected, boolean focus) {
+                JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, selected, focus);
+                if (value instanceof ProfileColor color) label.setIcon(UiIcons.colorDot(color.color(), 14));
+                return label;
+            }
         });
+        Color initialColor = previous == null ? Color.decode(ConnectionProfile.DEFAULT_COLOR) : previous.markerColor();
+        profileColor.setSelectedItem(nearestProfileColor(initialColor));
         JPanel profileForm = new JPanel(new GridBagLayout());
         GridBagConstraints form = new GridBagConstraints(); form.insets = new Insets(5, 5, 5, 5); form.anchor = GridBagConstraints.WEST;
         form.gridx = 0; form.gridy = 0; profileForm.add(new JLabel("Nombre del perfil"), form);
@@ -374,8 +387,7 @@ final class ConnectionDialog extends JDialog {
         form.gridx = 0; form.gridy++; form.weightx = 0; form.fill = GridBagConstraints.NONE; profileForm.add(new JLabel("Ambiente (opcional)"), form);
         form.gridx = 1; form.weightx = 1; form.fill = GridBagConstraints.HORIZONTAL; profileForm.add(environment, form);
         form.gridx = 0; form.gridy++; form.weightx = 0; form.fill = GridBagConstraints.NONE; profileForm.add(new JLabel("Color identificador"), form);
-        JPanel colorChoice = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0)); colorChoice.add(colorSample); colorChoice.add(chooseColor);
-        form.gridx = 1; form.weightx = 1; form.fill = GridBagConstraints.HORIZONTAL; profileForm.add(colorChoice, form);
+        form.gridx = 1; form.weightx = 1; form.fill = GridBagConstraints.HORIZONTAL; profileForm.add(profileColor, form);
         int answer = JOptionPane.showConfirmDialog(this, profileForm, "Guardar perfil de conexión",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (answer != JOptionPane.OK_OPTION || name.getText().isBlank()) return;
@@ -386,7 +398,7 @@ final class ConnectionDialog extends JDialog {
             ConnectionProfile profile = new ConnectionProfile(profileName, (DatabaseEngine) engine.getSelectedItem(),
                     fields[side][0].getText().trim(), Integer.parseInt(fields[side][1].getText().trim()),
                     (String) databases.get(side).getSelectedItem(), fields[side][2].getText().trim(), tls[side].isSelected(), false,
-                    environment.getText().trim(), colorHex(markerColor[0]));
+                    environment.getText().trim(), ((ProfileColor) profileColor.getSelectedItem()).hex());
             ConnectionProfiles.save(profile);
             if (rememberPasswords[side].isSelected()) {
                 ConnectionCredentialStore.save(profile.name(), password);
@@ -402,6 +414,16 @@ final class ConnectionDialog extends JDialog {
 
     private static String colorHex(Color color) {
         return String.format(Locale.ROOT, "#%02X%02X%02X", color.getRed(), color.getGreen(), color.getBlue());
+    }
+
+    private static ProfileColor nearestProfileColor(Color color) {
+        return PROFILE_COLORS.stream().min(Comparator.comparingLong(option -> {
+            Color candidate = option.color();
+            long red = color.getRed() - candidate.getRed();
+            long green = color.getGreen() - candidate.getGreen();
+            long blue = color.getBlue() - candidate.getBlue();
+            return red * red + green * green + blue * blue;
+        })).orElse(PROFILE_COLORS.get(0));
     }
 
     private ConnectionProfile selectedProfile(int side) {
