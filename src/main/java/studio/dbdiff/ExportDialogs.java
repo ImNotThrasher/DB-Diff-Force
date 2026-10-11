@@ -51,7 +51,7 @@ final class ExportDialogs {
         JPanel choices = new JPanel(new GridLayout(0, 1)); choices.add(insertChoice); choices.add(updateChoice); choices.add(deleteChoice);
         JPanel format = new JPanel(new FlowLayout(FlowLayout.LEFT)); format.add(new JLabel("Formato:")); format.add(fileMode);
         JPanel options = new JPanel(); options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS)); options.add(choices); options.add(format); options.add(ReviewDialog.disclosure("Opciones avanzadas", transaction));
-        JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(options, BorderLayout.NORTH); wrapper.add(new JScrollPane(preview), BorderLayout.CENTER);
+        JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(options, BorderLayout.NORTH); wrapper.add(SqlSearchOverlay.wrap(preview), BorderLayout.CENTER);
         JTextArea warning = ReviewDialog.note("Solo se exporta; nunca se ejecuta. En modo separado, cada archivo tiene su propia transacción."); wrapper.add(warning, BorderLayout.SOUTH); wrapper.setPreferredSize(new Dimension(900, 540));
         refresh.run();
         if (!ReviewDialog.confirm(frame, "Exportar SQL de filas", wrapper, new Dimension(960, 650))) return;
@@ -295,8 +295,8 @@ final class ExportDialogs {
         JPanel previewPanel = new JPanel(new BorderLayout(6, 6));
         previewPanel.add(optionStack, BorderLayout.NORTH);
         JTabbedPane reviewTabs = new JTabbedPane();
-        reviewTabs.addTab("SQL", new JScrollPane(preview));
-        reviewTabs.addTab("Plan y dependencias", new JScrollPane(planPreview));
+        reviewTabs.addTab("SQL", SqlSearchOverlay.wrap(preview));
+        reviewTabs.addTab("Plan y dependencias", SqlSearchOverlay.wrap(planPreview));
         previewPanel.add(reviewTabs, BorderLayout.CENTER);
         selectionPanel.setMinimumSize(new Dimension(0, 0));
         previewPanel.setMinimumSize(new Dimension(0, 0));
@@ -385,7 +385,7 @@ final class ExportDialogs {
         JPanel north = new JPanel(new BorderLayout(4, 6)); north.add(fields, BorderLayout.CENTER); north.add(destinationDetails, BorderLayout.SOUTH);
         JPanel note = InfoNote.wrap(ReviewDialog.note("Revisá y editá el SQL. El archivo se guardará sin ejecutarse; los bloques REVIEW ONLY son referencias y requieren decisión manual."));
         JPanel wrapper = new JPanel(new BorderLayout(8, 8));
-        wrapper.add(north, BorderLayout.NORTH); wrapper.add(new JScrollPane(preview), BorderLayout.CENTER); wrapper.add(note, BorderLayout.SOUTH);
+        wrapper.add(north, BorderLayout.NORTH); wrapper.add(SqlSearchOverlay.wrap(preview), BorderLayout.CENTER); wrapper.add(note, BorderLayout.SOUTH);
         wrapper.setPreferredSize(new Dimension(900, 650));
         JOptionPane options = new JOptionPane(wrapper, JOptionPane.PLAIN_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
         JDialog dialog = options.createDialog(frame, "Crear migración Flyway");
