@@ -14,10 +14,13 @@ final class ConnectionDialog extends JDialog {
         @Override public String toString() { return name; }
     }
     private static final List<ProfileColor> PROFILE_COLORS = List.of(
-            new ProfileColor("Gris", ConnectionProfile.DEFAULT_COLOR), new ProfileColor("Rojo", "#E05252"),
-            new ProfileColor("Naranja", "#E69735"), new ProfileColor("Amarillo", "#D6B832"),
-            new ProfileColor("Verde", "#36A269"), new ProfileColor("Azul", "#4389D1"),
-            new ProfileColor("Violeta", "#9A68C7"));
+            new ProfileColor("Gris", ConnectionProfile.DEFAULT_COLOR),
+            new ProfileColor("Rojo", ConnectionProfile.COLOR_RED),
+            new ProfileColor("Naranja", ConnectionProfile.COLOR_ORANGE),
+            new ProfileColor("Amarillo", ConnectionProfile.COLOR_YELLOW),
+            new ProfileColor("Verde", ConnectionProfile.COLOR_GREEN),
+            new ProfileColor("Azul", ConnectionProfile.COLOR_BLUE),
+            new ProfileColor("Violeta", ConnectionProfile.COLOR_VIOLET));
     enum SourceMode {
         DATABASE("Base de datos"), SNAPSHOT("Archivos SQL (CREATE)"), FLYWAY("Migraciones Flyway");
         private final String label;

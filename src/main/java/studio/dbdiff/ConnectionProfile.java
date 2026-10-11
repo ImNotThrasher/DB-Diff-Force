@@ -6,7 +6,14 @@ import java.awt.Color;
 public record ConnectionProfile(String name, DatabaseEngine engine, String host, int port,
                                 String database, String user, boolean useTls, boolean rememberPassword,
                                 String environment, String colorHex) {
-    public static final String DEFAULT_COLOR = "#808080";
+    public static final String COLOR_GREY = "#808080";
+    public static final String COLOR_RED = "#E05252";
+    public static final String COLOR_ORANGE = "#E69735";
+    public static final String COLOR_YELLOW = "#D6B832";
+    public static final String COLOR_GREEN = "#36A269";
+    public static final String COLOR_BLUE = "#4389D1";
+    public static final String COLOR_VIOLET = "#9A68C7";
+    public static final String DEFAULT_COLOR = COLOR_GREY;
 
     public ConnectionProfile(String name, DatabaseEngine engine, String host, int port,
                              String database, String user, boolean useTls) {
