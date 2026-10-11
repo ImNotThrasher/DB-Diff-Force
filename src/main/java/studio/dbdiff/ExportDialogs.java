@@ -135,7 +135,7 @@ final class ExportDialogs {
         if (available.isEmpty()) { JOptionPane.showMessageDialog(frame, "No hay objetos comparados con cambios para exportar.", "Sin cambios", JOptionPane.INFORMATION_MESSAGE); return; }
         EnumSet<DiffEngine.Status> ops = EnumSet.of(DiffEngine.Status.CHANGED, DiffEngine.Status.SOURCE_ONLY);
         JTextArea preview = area();
-        JCheckBox[] checks = new JCheckBox[3]; JPanel choices = new JPanel(new GridLayout(0, 1));
+        JCheckBox[] checks = new JCheckBox[3]; JPanel choices = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         boolean sqlServerExport = schemaEngine == DatabaseEngine.SQLSERVER;
         JCheckBox transaction = new JCheckBox(sqlServerExport
                 ? "Envolver el script en BEGIN TRANSACTION / COMMIT"
@@ -156,28 +156,53 @@ final class ExportDialogs {
         planPreview.setRows(7);
         List<DiffEngine.Result> currentlySelected = context.selected().stream()
                 .filter(DiffEngine.Result.class::isInstance).map(DiffEngine.Result.class::cast).toList();
+        ExportSelectionModel selection = new ExportSelectionModel(available, currentlySelected);
         DefaultListModel<DiffEngine.Result> exportModel = new DefaultListModel<>();
         JList<DiffEngine.Result> exportSelection = new JList<>(exportModel);
         exportSelection.setCellRenderer(new ObjectCatalogPanel.ResultRenderer());
         exportSelection.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         exportSelection.setVisibleRowCount(4);
-        for (DiffEngine.Result result : available) exportModel.addElement(result);
-        List<DiffEngine.Result> preselected = currentlySelected.isEmpty() ? available : currentlySelected;
-        for (int i = 0; i < exportModel.size(); i++) if (preselected.contains(exportModel.get(i))) exportSelection.addSelectionInterval(i, i);
-        JButton selectAll = new JButton("Seleccionar todos");
+        JTextField objectSearch = new PlaceholderTextField("Buscar por nombre o tipo...");
+        JLabel selectionSummary = new JLabel();
+        JButton selectVisible = new JButton("Seleccionar visibles");
         JButton clearSelection = new JButton("Limpiar");
         JPanel selectionActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-        selectionActions.add(selectAll); selectionActions.add(clearSelection);
+        selectionActions.add(selectVisible); selectionActions.add(clearSelection);
         JPanel selectionHeader = new JPanel(new BorderLayout());
-        selectionHeader.add(new JLabel("Objetos a exportar (Ctrl/Shift para selección múltiple)"), BorderLayout.WEST);
+        selectionHeader.add(new JLabel("Objetos con cambios"), BorderLayout.WEST);
         selectionHeader.add(selectionActions, BorderLayout.EAST);
+        JPanel selectionFilter = new JPanel(new BorderLayout(8, 0));
+        selectionFilter.add(objectSearch, BorderLayout.CENTER);
+        selectionFilter.add(selectionSummary, BorderLayout.EAST);
+        JPanel selectionTools = new JPanel(new BorderLayout(4, 5));
+        selectionTools.add(selectionHeader, BorderLayout.NORTH);
+        selectionTools.add(selectionFilter, BorderLayout.SOUTH);
         JPanel selectionPanel = new JPanel(new BorderLayout(4, 4));
-        selectionPanel.add(selectionHeader, BorderLayout.NORTH);
+        selectionPanel.add(selectionTools, BorderLayout.NORTH);
         selectionPanel.add(new JScrollPane(exportSelection), BorderLayout.CENTER);
-        selectionPanel.setPreferredSize(new Dimension(760, 190));
+        selectionPanel.setPreferredSize(new Dimension(760, 225));
         selectionPanel.setMinimumSize(new Dimension(360, 115));
+        boolean[] refreshingSelection = {false};
+        JButton[] saveButton = {null};
+        Runnable[] refreshPreviewRef = {() -> { }};
+        Runnable refreshVisibleItems = () -> {
+            refreshingSelection[0] = true;
+            try {
+                exportModel.clear();
+                for (DiffEngine.Result result : selection.visibleItems()) {
+                    exportModel.addElement(result);
+                    if (selection.isSelected(result.key())) {
+                        int index = exportModel.size() - 1;
+                        exportSelection.addSelectionInterval(index, index);
+                    }
+                }
+            } finally { refreshingSelection[0] = false; }
+            selectionSummary.setText(selection.selectedCount() + " seleccionados · "
+                    + exportModel.size() + " visibles / " + selection.availableCount() + " con cambios");
+            refreshPreviewRef[0].run();
+        };
         Runnable refreshPreview = () -> {
-            List<DiffEngine.Result> exportResults = exportSelection.getSelectedValuesList();
+            List<DiffEngine.Result> exportResults = selection.selectedItems();
             SqlExporter.Strategy strategy = switch (createStrategy.getSelectedIndex()) {
                 case 1 -> SqlExporter.Strategy.CREATE;
                 case 2 -> sqlServerExport ? SqlExporter.Strategy.CREATE_OR_ALTER : SqlExporter.Strategy.CREATE_OR_REPLACE;
@@ -194,7 +219,10 @@ final class ExportDialogs {
                     metadataNotes, exportSql).render());
             planPreview.setCaretPosition(0);
             preview.setCaretPosition(0);
+            boolean hasApplicableOperation = selection.canExport(ops);
             if (exportResults.isEmpty()) warning.setText("Seleccioná al menos un objeto para ver el script.");
+            else if (ops.isEmpty()) warning.setText("Activá al menos una operación para generar el SQL.");
+            else if (!hasApplicableOperation) warning.setText("La selección no tiene objetos para las operaciones activas. Activá DROP para incluir objetos solo en destino.");
             else if (schemaEngine == DatabaseEngine.SQLSERVER && strategy == SqlExporter.Strategy.CREATE_OR_ALTER)
                 warning.setText("CREATE OR ALTER requiere SQL Server 2016 SP1 o posterior; los cambios de tablas quedan para revisión manual.");
             else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MARIADB && exportResults.stream().anyMatch(r -> r.key().kind() == SchemaObject.Kind.TABLE && r.status() == DiffEngine.Status.CHANGED))
@@ -206,11 +234,20 @@ final class ExportDialogs {
             else if (transaction.isSelected())
                 warning.setText("MariaDB puede confirmar DDL automáticamente; la transacción no garantiza rollback del esquema.");
             else warning.setText("El SQL solo se exporta; la aplicación nunca lo ejecuta.");
+            if (saveButton[0] != null) saveButton[0].setEnabled(!exportResults.isEmpty() && !ops.isEmpty() && hasApplicableOperation);
         };
+        refreshPreviewRef[0] = refreshPreview;
         DiffEngine.Status[] statuses = {DiffEngine.Status.SOURCE_ONLY, DiffEngine.Status.CHANGED, DiffEngine.Status.TARGET_ONLY};
-        String[] labels = {"CREATE: objetos solo en origen", sqlServerExport ? "ALTER / CREATE OR ALTER: objetos modificados" : "ALTER / reemplazar: objetos modificados", "DROP: objetos solo en destino"};
+        String[] labels = {"CREATE: solo en origen", "ALTER: objetos modificados", "DROP: solo en destino"};
+        String[] operationTooltips = {
+                "Crear objetos presentes solo en el origen.",
+                sqlServerExport ? "Modificar objetos existentes; CREATE OR ALTER aplica a vistas y rutinas según la estrategia elegida."
+                        : "Modificar objetos existentes; la estrategia elegida determina cómo se reemplazan vistas y rutinas.",
+                "Eliminar del destino objetos que no existen en el origen. Revisá el SQL antes de aplicarlo."
+        };
         for (int i = 0; i < checks.length; i++) {
             checks[i] = new JCheckBox(labels[i], i != 2);
+            checks[i].setToolTipText(operationTooltips[i]);
             final DiffEngine.Status status = statuses[i];
             final JCheckBox check = checks[i];
             checks[i].addActionListener(e -> {
@@ -222,14 +259,23 @@ final class ExportDialogs {
         transaction.addActionListener(event -> refreshPreview.run());
         dropIfExists.addActionListener(event -> refreshPreview.run());
         createStrategy.addActionListener(event -> refreshPreview.run());
-        exportSelection.addListSelectionListener(event -> { if (!event.getValueIsAdjusting()) refreshPreview.run(); });
-        selectAll.addActionListener(event -> { if (!exportModel.isEmpty()) exportSelection.setSelectionInterval(0, exportModel.size() - 1); });
-        clearSelection.addActionListener(event -> exportSelection.clearSelection());
+        exportSelection.addListSelectionListener(event -> {
+            if (event.getValueIsAdjusting() || refreshingSelection[0]) return;
+            selection.replaceVisibleSelection(exportSelection.getSelectedValuesList());
+            selectionSummary.setText(selection.selectedCount() + " seleccionados · "
+                    + exportModel.size() + " visibles / " + selection.availableCount() + " con cambios");
+            refreshPreview.run();
+        });
+        objectSearch.getDocument().addDocumentListener(documentListener(() -> {
+            selection.setQuery(objectSearch.getText());
+            refreshVisibleItems.run();
+        }));
+        selectVisible.addActionListener(event -> { selection.selectVisible(); refreshVisibleItems.run(); });
+        clearSelection.addActionListener(event -> { selection.clear(); refreshVisibleItems.run(); });
         JPanel advancedOptions = new JPanel(new GridLayout(0, 1));
         advancedOptions.add(transaction); advancedOptions.add(dropIfExists);
         JPanel strategy = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         JLabel strategyLabel = new JLabel("Estrategia para objetos modificados:");
-        boolean dark = AppTheme.isDark(theme); ThemePalette palette = ThemePalette.forMode(dark);
         warning.setForeground(javax.swing.UIManager.getColor("Component.warning.focusedBorderColor"));
         strategy.add(strategyLabel); strategy.add(createStrategy);
         JPanel optionStack = new JPanel(new BorderLayout(4, 4)); optionStack.add(choices, BorderLayout.NORTH); optionStack.add(strategy, BorderLayout.CENTER); optionStack.add(ReviewDialog.disclosure("Opciones avanzadas", advancedOptions), BorderLayout.SOUTH);
@@ -243,13 +289,15 @@ final class ExportDialogs {
         JSplitPane exportSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, selectionPanel, previewPanel);
         exportSplit.setContinuousLayout(true);
         exportSplit.setOneTouchExpandable(true);
-        exportSplit.setResizeWeight(.27);
+        exportSplit.setResizeWeight(.30);
         exportSplit.setDividerSize(9);
-        exportSplit.setDividerLocation(.27);
-        refreshPreview.run();
+        exportSplit.setDividerLocation(.30);
+        refreshVisibleItems.run();
         JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(exportSplit, BorderLayout.CENTER); wrapper.setPreferredSize(new Dimension(900, 740));
         wrapper.add(warning, BorderLayout.SOUTH);
-        if (!ReviewDialog.confirm(frame, "Exportar esquema", wrapper, new Dimension(980, 780))) return;
+        if (!ReviewDialog.confirm(frame, "Exportar esquema", wrapper, new Dimension(980, 780), "Guardar SQL…",
+                () -> selection.canExport(ops),
+                button -> saveButton[0] = button)) return;
         JFileChooser chooser = new JFileChooser(); chooser.setSelectedFile(new java.io.File("db-diff-exportacion.sql")); if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
         try { Files.writeString(chooser.getSelectedFile().toPath(), preview.getText(), StandardCharsets.UTF_8); JOptionPane.showMessageDialog(frame, "Se guardó el SQL. No se ejecutó.", "Exportación lista", JOptionPane.INFORMATION_MESSAGE); }
         catch (IOException ex) { error("No se pudo guardar la exportación", ex); }

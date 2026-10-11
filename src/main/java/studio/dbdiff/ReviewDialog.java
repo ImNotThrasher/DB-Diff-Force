@@ -3,6 +3,8 @@ package studio.dbdiff;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 /** Shared resizable review window and compact secondary information. */
 final class ReviewDialog {
@@ -13,9 +15,16 @@ final class ReviewDialog {
     }
 
     static boolean confirm(JFrame owner, String title, JComponent content, Dimension size, String action) {
+        return confirm(owner, title, content, size, action, () -> true, button -> { });
+    }
+
+    static boolean confirm(JFrame owner, String title, JComponent content, Dimension size, String action,
+                           BooleanSupplier canConfirm, Consumer<JButton> saveButtonReady) {
         JDialog dialog = new JDialog(owner, title, true);
         boolean[] accepted = {false};
         JButton save = new JButton(action), cancel = new JButton("Cancelar");
+        save.setEnabled(canConfirm.getAsBoolean());
+        saveButtonReady.accept(save);
         save.addActionListener(e -> { accepted[0] = true; dialog.dispose(); });
         cancel.addActionListener(e -> dialog.dispose());
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
