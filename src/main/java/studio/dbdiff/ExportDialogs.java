@@ -140,6 +140,9 @@ final class ExportDialogs {
         JCheckBox transaction = new JCheckBox(sqlServerExport
                 ? "Envolver el script en BEGIN TRANSACTION / COMMIT"
                 : "Envolver el script en START TRANSACTION / COMMIT");
+        JCheckBox rollbackOnError = new JCheckBox("Revertir toda la transacción si falla una operación", true);
+        rollbackOnError.setToolTipText("En SQL Server, ejecuta cada definición en un bloque con manejo de errores y revierte los cambios si una operación falla.");
+        rollbackOnError.setEnabled(sqlServerExport && transaction.isSelected());
         JCheckBox dropIfExists = new JCheckBox(sqlServerExport
                 ? "Usar DROP IF EXISTS al eliminar objetos"
                 : "Usar DROP IF EXISTS al eliminar objetos o reemplazar rutinas");
@@ -208,7 +211,9 @@ final class ExportDialogs {
                 case 2 -> sqlServerExport ? SqlExporter.Strategy.CREATE_OR_ALTER : SqlExporter.Strategy.CREATE_OR_REPLACE;
                 default -> SqlExporter.Strategy.ALTER;
             };
-            String exportSql = SqlExporter.export(exportResults, ops, context.targetDatabase(), transaction.isSelected(), dropIfExists.isSelected(), strategy, schemaEngine, context.sourceDependencies(), context.targetDependencies());
+            String exportSql = SqlExporter.export(exportResults, ops, context.targetDatabase(), transaction.isSelected(),
+                    rollbackOnError.isSelected(), dropIfExists.isSelected(), strategy, schemaEngine,
+                    context.sourceDependencies(), context.targetDependencies());
             preview.setText(exportSql);
             List<String> metadataNotes = new ArrayList<>();
             metadataNotes.addAll(DependencySummary.notes("Origen", context.sourceDependencyReport()));
@@ -229,8 +234,10 @@ final class ExportDialogs {
                 warning.setText("CREATE OR REPLACE TABLE elimina y recrea la tabla destino, incluidos sus datos.");
             else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MYSQL)
                 warning.setText("MySQL admite CREATE OR REPLACE para vistas. Las tablas modificadas se exportan como ALTER si se pueden derivar.");
+            else if (transaction.isSelected() && schemaEngine == DatabaseEngine.SQLSERVER && rollbackOnError.isSelected())
+                warning.setText("Si una operación falla, el script revierte la transacción completa. Revisá el SQL antes de aplicarlo.");
             else if (transaction.isSelected() && schemaEngine == DatabaseEngine.SQLSERVER)
-                warning.setText("El script usa transacción explícita; revisá cada sentencia y las restricciones del servidor antes de aplicarlo.");
+                warning.setText("El script usa transacción explícita sin rollback automático ante errores. Revisá cada sentencia antes de aplicarlo.");
             else if (transaction.isSelected())
                 warning.setText("MariaDB puede confirmar DDL automáticamente; la transacción no garantiza rollback del esquema.");
             else warning.setText("El SQL solo se exporta; la aplicación nunca lo ejecuta.");
@@ -256,7 +263,11 @@ final class ExportDialogs {
             });
             choices.add(checks[i]);
         }
-        transaction.addActionListener(event -> refreshPreview.run());
+        transaction.addActionListener(event -> {
+            rollbackOnError.setEnabled(sqlServerExport && transaction.isSelected());
+            refreshPreview.run();
+        });
+        rollbackOnError.addActionListener(event -> refreshPreview.run());
         dropIfExists.addActionListener(event -> refreshPreview.run());
         createStrategy.addActionListener(event -> refreshPreview.run());
         exportSelection.addListSelectionListener(event -> {
@@ -273,7 +284,9 @@ final class ExportDialogs {
         selectVisible.addActionListener(event -> { selection.selectVisible(); refreshVisibleItems.run(); });
         clearSelection.addActionListener(event -> { selection.clear(); refreshVisibleItems.run(); });
         JPanel advancedOptions = new JPanel(new GridLayout(0, 1));
-        advancedOptions.add(transaction); advancedOptions.add(dropIfExists);
+        advancedOptions.add(transaction);
+        if (sqlServerExport) advancedOptions.add(rollbackOnError);
+        advancedOptions.add(dropIfExists);
         JPanel strategy = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         JLabel strategyLabel = new JLabel("Estrategia para objetos modificados:");
         warning.setForeground(javax.swing.UIManager.getColor("Component.warning.focusedBorderColor"));

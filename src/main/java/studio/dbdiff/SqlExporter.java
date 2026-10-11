@@ -37,9 +37,17 @@ public final class SqlExporter {
                                 Strategy strategy, DatabaseEngine engine,
                                 Map<SchemaObject.Key, Set<SchemaObject.Key>> sourceDependencies,
                                 Map<SchemaObject.Key, Set<SchemaObject.Key>> targetDependencies) {
+        return export(results, operations, targetDatabase, transaction, false, dropIfExists, strategy,
+                engine, sourceDependencies, targetDependencies);
+    }
+    public static String export(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
+                                String targetDatabase, boolean transaction, boolean rollbackOnError,
+                                boolean dropIfExists, Strategy strategy, DatabaseEngine engine,
+                                Map<SchemaObject.Key, Set<SchemaObject.Key>> sourceDependencies,
+                                Map<SchemaObject.Key, Set<SchemaObject.Key>> targetDependencies) {
         List<DiffEngine.Result> ordered = orderByDependencies(results, operations, sourceDependencies, targetDependencies);
         return engine == DatabaseEngine.SQLSERVER
-                ? exportSqlServer(ordered, operations, targetDatabase, transaction, dropIfExists, strategy)
+                ? exportSqlServer(ordered, operations, targetDatabase, transaction, rollbackOnError, dropIfExists, strategy)
                 : exportMySqlFamily(ordered, operations, targetDatabase, transaction, dropIfExists, strategy, engine);
     }
 
@@ -110,28 +118,57 @@ public final class SqlExporter {
     }
 
     private static String exportSqlServer(List<DiffEngine.Result> results, Set<DiffEngine.Status> operations,
-                                          String database, boolean transaction, boolean dropIfExists, Strategy strategy) {
+                                          String database, boolean transaction, boolean rollbackOnError,
+                                          boolean dropIfExists, Strategy strategy) {
         StringBuilder out = new StringBuilder("-- " + AppInfo.NAME + " export\n-- Review before use. This file was not executed.\n"
                 + "-- The CREATE OR ALTER strategy requires SQL Server 2016 SP1 or later.\n"
                 + "-- Table changes are review-only until a safe T-SQL ALTER can be derived.\n\n");
         out.append("USE ").append(tsqlQuote(database)).append(";\nGO\n\n");
+        if (transaction && rollbackOnError) {
+            out.append("DECLARE @DbDiffForcePreviousXactAbort bit = CASE WHEN (16384 & @@OPTIONS) = 16384 THEN 1 ELSE 0 END;\n")
+                    .append("SET XACT_ABORT ON;\n")
+                    .append("BEGIN TRY\n    BEGIN TRANSACTION;\n\n");
+            appendSqlServerOperations(out, results, operations, dropIfExists, strategy, true);
+            out.append("    COMMIT TRANSACTION;\n")
+                    .append("    IF @DbDiffForcePreviousXactAbort = 0 SET XACT_ABORT OFF;\n")
+                    .append("END TRY\n")
+                    .append("BEGIN CATCH\n")
+                    .append("    IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;\n")
+                    .append("    IF @DbDiffForcePreviousXactAbort = 0 SET XACT_ABORT OFF;\n")
+                    .append("    THROW;\n")
+                    .append("END CATCH;\nGO\n");
+            return out.toString();
+        }
         if (transaction) out.append("BEGIN TRANSACTION;\nGO\n\n");
+        appendSqlServerOperations(out, results, operations, dropIfExists, strategy, false);
+        if (transaction) out.append("COMMIT TRANSACTION;\nGO\n");
+        return out.toString();
+    }
+
+    private static void appendSqlServerOperations(StringBuilder out, List<DiffEngine.Result> results,
+            Set<DiffEngine.Status> operations, boolean dropIfExists, Strategy strategy, boolean rollbackOnError) {
         for (DiffEngine.Result result : results) {
             if (!operations.contains(result.status()) || result.status() == DiffEngine.Status.IDENTICAL) continue;
             SchemaObject object = result.source() != null ? result.source() : result.target();
-            out.append("-- ").append(result.status()).append(' ').append(object.key().kind()).append(' ')
-                    .append(object.key().qualifiedName()).append("\n");
+            StringBuilder operation = new StringBuilder();
             switch (result.status()) {
-                case SOURCE_ONLY -> out.append("-- Proposed operation: create object from source definition\n")
-                        .append(sqlServerSource(result.source(), strategy)).append("\nGO\n\n");
-                case TARGET_ONLY -> out.append("-- Proposed operation: DROP target object\n")
-                        .append(sqlServerDrop(object.key(), dropIfExists)).append("\nGO\n\n");
-                case CHANGED -> out.append(sqlServerChanged(result, strategy, dropIfExists)).append("\nGO\n\n");
+                case SOURCE_ONLY -> operation.append(sqlServerSource(result.source(), strategy));
+                case TARGET_ONLY -> operation.append(sqlServerDrop(object.key(), dropIfExists));
+                case CHANGED -> operation.append(sqlServerChanged(result, strategy, dropIfExists));
                 default -> { }
             }
+            out.append("-- ").append(result.status()).append(' ').append(object.key().kind()).append(' ')
+                    .append(object.key().qualifiedName()).append("\n");
+            if (result.status() == DiffEngine.Status.SOURCE_ONLY) out.append("-- Proposed operation: create object from source definition\n");
+            if (result.status() == DiffEngine.Status.TARGET_ONLY) out.append("-- Proposed operation: DROP target object\n");
+            if (rollbackOnError) {
+                out.append("    EXEC sys.sp_executesql N'")
+                        .append(operation.toString().replace("'", "''"))
+                        .append("';\n\n");
+            } else {
+                out.append(operation).append("\nGO\n\n");
+            }
         }
-        if (transaction) out.append("COMMIT TRANSACTION;\nGO\n");
-        return out.toString();
     }
 
     private static String sqlServerChanged(DiffEngine.Result result, Strategy strategy, boolean dropIfExists) {
