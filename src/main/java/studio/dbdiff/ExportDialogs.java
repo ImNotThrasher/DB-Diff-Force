@@ -287,7 +287,7 @@ final class ExportDialogs {
         JLabel destination = new JLabel("Se guardará en: " + folder.toAbsolutePath().normalize());
         destination.setToolTipText(destination.getText());
         JPanel north = new JPanel(new BorderLayout(4, 6)); north.add(fields, BorderLayout.CENTER); north.add(destination, BorderLayout.SOUTH);
-        JTextArea note = ReviewDialog.note("Revisá y editá el SQL. El archivo se guardará sin ejecutarse; los bloques REVIEW ONLY son referencias y requieren decisión manual.");
+        JPanel note = InfoNote.wrap(ReviewDialog.note("Revisá y editá el SQL. El archivo se guardará sin ejecutarse; los bloques REVIEW ONLY son referencias y requieren decisión manual."));
         JPanel wrapper = new JPanel(new BorderLayout(8, 8));
         wrapper.add(north, BorderLayout.NORTH); wrapper.add(new JScrollPane(preview), BorderLayout.CENTER); wrapper.add(note, BorderLayout.SOUTH);
         wrapper.setPreferredSize(new Dimension(900, 650));

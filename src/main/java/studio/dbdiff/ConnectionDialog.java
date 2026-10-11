@@ -236,13 +236,8 @@ final class ConnectionDialog extends JDialog {
         sourceCardTitle.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD)); panel.add(sourceCardTitle, c);
         configureWrappedSourceText(sourceCardDescription);
         configureWrappedSourceText(sourceCardNotice);
-        sourceCardNotice.setForeground(sourceNoticeColor());
-        JPanel noticePanel = new JPanel(new BorderLayout());
-        noticePanel.setOpaque(false);
-        noticePanel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(0, 3, 0, 0, sourceNoticeColor()),
-                new EmptyBorder(3, 8, 3, 4)));
-        noticePanel.add(sourceCardNotice, BorderLayout.CENTER);
+        sourceCardNotice.setForeground(InfoNote.accentColor());
+        JPanel noticePanel = InfoNote.wrap(sourceCardNotice);
         c.gridy++; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1; c.insets = new Insets(0, 4, 4, 4); panel.add(sourceCardDescription, c);
         c.gridy++; c.insets = new Insets(0, 4, 8, 4); panel.add(noticePanel, c);
         c.gridy++; c.gridwidth = 1; c.insets = new Insets(4, 4, 4, 4); panel.add(new JLabel("Carpeta"), c);
@@ -262,11 +257,6 @@ final class ConnectionDialog extends JDialog {
         text.setBorder(null);
         text.setFont(UIManager.getFont("Label.font"));
         text.setRows(2);
-    }
-
-    private static Color sourceNoticeColor() {
-        Color color = UIManager.getColor("Component.focusColor");
-        return color != null ? color : UIManager.getColor("Label.foreground");
     }
 
     private void updateSourceMode() {

@@ -23,7 +23,7 @@ public final class ComparisonView extends JPanel {
     private final JTextArea emptyMessage = new JTextArea();
     private final JLabel sourceEndpoint = new JLabel("Sin seleccionar");
     private final JLabel targetEndpoint = new JLabel("Sin seleccionar");
-    private final JLabel modeNotice = new JLabel("Comparación de esquema; no compara datos de filas.");
+    private final JLabel modeNotice = new JLabel("Solo comparación de esquema");
     private final JTextArea summary = new JTextArea();
     private final DiffCodeEditor source = new DiffCodeEditor(false, true);
     private final DiffCodeEditor target = new DiffCodeEditor(false, false);
@@ -32,6 +32,7 @@ public final class ComparisonView extends JPanel {
     private final JLabel targetHeading = new JLabel("DESTINO");
     private final JLabel unifiedHeading = new JLabel("DIFERENCIAS · origen (O) / destino (D)");
     private JToggleButton splitModeButton, unifiedModeButton;
+    private JPanel modeNoticeBlock;
     private final JPanel cards = new JPanel(new CardLayout());
     private DiffEngine.Result current;
     private boolean dark;
@@ -65,16 +66,24 @@ public final class ComparisonView extends JPanel {
     }
 
     public void setDatabases(String sourceName, String targetName, String sourceServer, String targetServer) {
+        setDatabases(sourceName, targetName, sourceServer, targetServer, null);
+    }
+
+    public void setDatabases(String sourceName, String targetName, String sourceServer, String targetServer,
+                             String sourceLocationTooltip) {
         String source = endpointName(sourceServer, sourceName);
         String target = endpointName(targetServer, targetName);
-        sourceEndpoint.setText(source); sourceEndpoint.setToolTipText(source);
+        String sourceTooltip = sourceLocationTooltip == null || sourceLocationTooltip.isBlank()
+                ? source : "Carpeta: " + sourceLocationTooltip;
+        sourceEndpoint.setText(source); sourceEndpoint.setToolTipText(sourceTooltip);
         targetEndpoint.setText(target); targetEndpoint.setToolTipText(target);
-        sourceHeading.setText("ORIGEN · " + displayName(sourceName));
+        sourceHeading.setText("ORIGEN · " + displayName(sourceName)); sourceHeading.setToolTipText(sourceTooltip);
         targetHeading.setText("DESTINO · " + displayName(targetName));
     }
 
     public void setFlywayMode(boolean flyway) {
         modeNotice.setVisible(flyway);
+        if (modeNoticeBlock != null) modeNoticeBlock.setVisible(flyway);
         revalidate();
     }
 
@@ -125,8 +134,9 @@ public final class ComparisonView extends JPanel {
         summary.setRows(1); summary.setEditable(false); summary.setLineWrap(true); summary.setWrapStyleWord(true);
         summary.setOpaque(false); summary.setFont(javax.swing.UIManager.getFont("Label.font")); summary.setBorder(null);
         labels.add(endpoints, BorderLayout.CENTER);
-        modeNotice.setBorder(new EmptyBorder(0, 0, 0, 0));
-        labels.add(modeNotice, BorderLayout.EAST);
+        modeNoticeBlock = InfoNote.wrap(modeNotice);
+        modeNoticeBlock.setVisible(false);
+        labels.add(modeNoticeBlock, BorderLayout.EAST);
         splitModeButton = new JToggleButton("Dividido", UiIcons.themed(UiIcons.SPLIT, 16));
         unifiedModeButton = new JToggleButton("Unificado", UiIcons.themed(UiIcons.UNIFIED, 16));
         splitModeButton.setIconTextGap(6); unifiedModeButton.setIconTextGap(6);

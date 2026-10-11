@@ -311,7 +311,10 @@ public final class Main {
                     comparisonView.setFlywayMode(selection.mode() == ConnectionDialog.SourceMode.FLYWAY);
                     String sourceServer = selection.mode() == ConnectionDialog.SourceMode.DATABASE
                             ? endpointAddress(selection.origin()) : "";
-                    comparisonView.setDatabases(sourceDatabase, targetDatabase, sourceServer, endpointAddress(selection.destination()));
+                    String sourcePath = selection.sourceFolder() == null ? null
+                            : selection.sourceFolder().toAbsolutePath().normalize().toString();
+                    comparisonView.setDatabases(sourceDatabase, targetDatabase, sourceServer,
+                            endpointAddress(selection.destination()), sourcePath);
                     loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
                     compared = false; comparedKeys.clear(); rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
                     showCatalog(); setConnectionAvailable(true); refreshDependencyStatus();
@@ -346,10 +349,10 @@ public final class Main {
                 sourceName = selection.origin().database();
             } else if (selection.mode() == ConnectionDialog.SourceMode.SNAPSHOT) {
                 loadedSource = new SqlSnapshotSource(selection.sourceFolder(), destinationEndpoint.engine());
-                sourceName = "Snapshot: " + selection.sourceFolder().getFileName();
+                sourceName = sourceFolderLabel("Snapshot", selection.sourceFolder());
             } else {
                 loadedSource = FlywayReconstructionSource.build(selection.sourceFolder(), destinationEndpoint);
-                sourceName = "Flyway: " + selection.sourceFolder().getFileName();
+                sourceName = sourceFolderLabel("Flyway", selection.sourceFolder());
             }
 
             List<SchemaObject> sourceCatalog = loadedSource.listObjects();
@@ -368,6 +371,13 @@ public final class Main {
             if (destinationConnection != null) destinationConnection.close();
             throw ex;
         }
+    }
+
+    private static String sourceFolderLabel(String kind, Path folder) {
+        Path name = folder.toAbsolutePath().normalize().getFileName();
+        String displayName = name == null || name.toString().isBlank()
+                ? folder.toAbsolutePath().normalize().toString() : name.toString();
+        return kind + ": " + displayName;
     }
 
     private static String endpointAddress(Endpoint endpoint) {
