@@ -408,6 +408,17 @@ public final class SqlServerConnector implements DatabaseConnector {
 
     @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
                                                        BiConsumer<Long, Long> progress) throws SQLException {
+        return compareTableRows(peerConnector, key, maxChanges, List.of(), progress);
+    }
+
+    @Override public RowComparisonMetadata rowComparisonMetadata(SchemaObject.Key key) throws SQLException {
+        requireConnection();
+        if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException(RowComparisonMessages.tablesOnly());
+        return new RowComparisonMetadata(readColumns(key), readPrimaryKey(key));
+    }
+
+    @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
+                                                       List<String> customKeyNames, BiConsumer<Long, Long> progress) throws SQLException {
         requireConnection();
         if (!(peerConnector instanceof SqlServerConnector peer)) throw new SQLException(RowComparisonMessages.sqlServerConnectionsRequired());
         peer.requireConnection();
@@ -418,18 +429,25 @@ public final class SqlServerConnector implements DatabaseConnector {
         if (columns.isEmpty()) throw new SQLException(RowComparisonMessages.noVisibleColumns());
         if (!compatibleColumns(columns, peerColumns)) throw new SQLException(RowComparisonMessages.incompatibleColumns());
         if (!compatiblePrimaryKeys(primaryKey, peerPrimaryKey)) throw new SQLException(RowComparisonMessages.incompatiblePrimaryKey());
-        if (primaryKey.isEmpty()) throw new SQLException(RowComparisonMessages.primaryKeyRequired());
+        List<RowDiff.Column> comparisonKey = primaryKey;
+        boolean customKey = primaryKey.isEmpty();
+        if (customKey) comparisonKey = selectedKey(columns, customKeyNames);
+        List<RowDiff.Column> rowKey = comparisonKey;
         for (RowDiff.Column column : columns) if (!safeComparable(column.type()))
             throw new SQLException(RowComparisonMessages.unsupportedColumnType(column.name(), column.type()));
-        for (RowDiff.Column column : primaryKey) if (!safeKey(column.type()))
+        for (RowDiff.Column column : comparisonKey) if (!safeKey(column.type()))
             throw new SQLException(RowComparisonMessages.unsupportedPrimaryKeyType(column.name(), column.type()));
+        if (customKey) {
+            validateCustomKey(key, comparisonKey);
+            peer.validateCustomKey(key, comparisonKey);
+        }
 
         progress.accept(0L, -1L);
         long totalRows = countRows(key) + peer.countRows(key);
         progress.accept(0L, totalRows);
 
         String selectedColumns = columns.stream().map(column -> quote(column.name())).collect(java.util.stream.Collectors.joining(", "));
-        String orderBy = primaryKey.stream().map(column -> isText(column.type())
+        String orderBy = comparisonKey.stream().map(column -> isText(column.type())
                 ? "CONVERT(nvarchar(4000)," + quote(column.name()) + ") COLLATE Latin1_General_100_BIN2" : quote(column.name()))
                 .collect(java.util.stream.Collectors.joining(", "));
         String sourceQuery = "SELECT " + selectedColumns + " FROM " + qualified(database, key) + " ORDER BY " + orderBy;
@@ -443,13 +461,39 @@ public final class SqlServerConnector implements DatabaseConnector {
             try (ResultSet sourceRows = left.executeQuery(); ResultSet targetRows = right.executeQuery()) {
                 // SQL Server supplies its own binary key ordering and value comparison;
                 // the common merger streams both sorted cursors without retaining full tables.
-                return RowComparisonMerger.compare(peer.database, key, columns, primaryKey, maxChanges, totalRows,
+                return RowComparisonMerger.compare(peer.database, key, columns, rowKey, maxChanges, totalRows,
                         () -> sourceRows.next() ? readRow(sourceRows, columns) : null,
                         () -> targetRows.next() ? readRow(targetRows, columns) : null,
-                        (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, primaryKey),
+                        (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, rowKey),
                         (sourceRow, targetRow) -> rowsEqual(sourceRow, targetRow, columns),
-                        progress, String.join(" ", warnings));
+                        progress, String.join(" ", warnings) + (customKey
+                                ? " Clave personalizada verificada sin valores NULL ni duplicados en ambos extremos." : "").trim());
             }
+        }
+    }
+
+    private static List<RowDiff.Column> selectedKey(List<RowDiff.Column> columns, List<String> names) throws SQLException {
+        if (names == null || names.isEmpty()) throw new SQLException(RowComparisonMessages.primaryKeyRequired());
+        List<RowDiff.Column> selected = new ArrayList<>();
+        for (String name : names) {
+            RowDiff.Column column = columns.stream().filter(candidate -> candidate.name().equalsIgnoreCase(name)).findFirst()
+                    .orElseThrow(() -> new SQLException(RowComparisonMessages.customKeyInvalid(name)));
+            selected.add(column);
+        }
+        return List.copyOf(selected);
+    }
+
+    private void validateCustomKey(SchemaObject.Key table, List<RowDiff.Column> key) throws SQLException {
+        String columns = key.stream().map(column -> quote(column.name())).collect(java.util.stream.Collectors.joining(", "));
+        String nullPredicate = key.stream().map(column -> quote(column.name()) + " IS NULL").collect(java.util.stream.Collectors.joining(" OR "));
+        String qualified = qualified(database, table);
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT TOP (1) 1 FROM " + qualified + " WHERE " + nullPredicate)) {
+            if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyContainsNull());
+        }
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT TOP (1) 1 FROM " + qualified + " GROUP BY " + columns + " HAVING COUNT_BIG(*) > 1")) {
+            if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyNotUnique());
         }
     }
 
@@ -530,7 +574,7 @@ public final class SqlServerConnector implements DatabaseConnector {
         for (RowDiff.Column key : keys) {
             Object a = left.get(key.name()), b = right.get(key.name());
             int comparison;
-            if (a == null || b == null) { if (a == b) comparison = 0; else throw new SQLException(RowComparisonMessages.primaryKeyContainsNull()); }
+            if (a == null || b == null) { if (a == b) comparison = 0; else throw new SQLException(RowComparisonMessages.comparisonKeyContainsNull()); }
             else if (isNumeric(key.type())) comparison = new BigDecimal(a.toString()).compareTo(new BigDecimal(b.toString()));
             else if (isText(key.type())) comparison = a.toString().compareTo(b.toString());
             else comparison = a.toString().compareTo(b.toString());

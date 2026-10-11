@@ -39,7 +39,7 @@ public final class RowSqlExporter {
                 }
                 case TARGET_ONLY -> {
                     if (deletes) statements.append(sqlServer ? "DELETE FROM " : "DELETE FROM ").append(table)
-                            .append(" WHERE ").append(predicate(result.primaryKey(), change.key(), engine))
+                            .append(" WHERE ").append(predicate(result.comparisonKey(), change.key(), engine))
                             .append(sqlServer ? ";\n" : " LIMIT 1;\n");
                 }
                 case DIFFERENT -> {
@@ -55,7 +55,7 @@ public final class RowSqlExporter {
                         statements.append(quote(column.name(), engine)).append(" = ")
                                 .append(literal(change.source().get(column.name()), column.type(), engine));
                     }
-                    statements.append(" WHERE ").append(predicate(result.primaryKey(), change.key(), engine))
+                    statements.append(" WHERE ").append(predicate(result.comparisonKey(), change.key(), engine))
                             .append(sqlServer ? ";\n" : " LIMIT 1;\n");
                 }
                 case IDENTICAL -> { /* No migration is needed for an unchanged row. */ }

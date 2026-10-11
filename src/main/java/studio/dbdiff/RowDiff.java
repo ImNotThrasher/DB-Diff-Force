@@ -20,9 +20,9 @@ public final class RowDiff {
         public RowChange { key = immutable(key); source = immutable(source); target = immutable(target); }
         private static Map<String, Object> immutable(Map<String, Object> values) { return values == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(values)); }
     }
-    public record Result(String targetDatabase, SchemaObject.Key table, List<Column> columns, List<Column> primaryKey, List<RowChange> changes,
+    public record Result(String targetDatabase, SchemaObject.Key table, List<Column> columns, List<Column> comparisonKey, List<RowChange> changes,
                          long sourceOnly, long targetOnly, long different, long matchedRows, boolean truncated, String warning) {
         /** Freeze collections before the worker result is handed to Swing's EDT. */
-        public Result { columns = List.copyOf(columns); primaryKey = List.copyOf(primaryKey); changes = List.copyOf(changes); }
+        public Result { columns = List.copyOf(columns); comparisonKey = List.copyOf(comparisonKey); changes = List.copyOf(changes); }
     }
 }

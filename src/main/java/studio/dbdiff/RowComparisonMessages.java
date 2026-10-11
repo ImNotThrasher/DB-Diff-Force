@@ -36,6 +36,26 @@ final class RowComparisonMessages {
         return "Se omitió la comparación: la tabla no tiene clave primaria y no se pueden emparejar sus filas de forma segura.";
     }
 
+    static String customKeysUnsupported() {
+        return "Este conector todavía no admite claves personalizadas para comparar filas.";
+    }
+
+    static String customKeyRequired() {
+        return "Elegí al menos una columna para identificar las filas.";
+    }
+
+    static String customKeyInvalid(String column) {
+        return "La columna " + column + " no es válida para identificar filas en ambos extremos.";
+    }
+
+    static String customKeyContainsNull() {
+        return "La clave elegida contiene valores NULL; elegí otras columnas para comparar las filas.";
+    }
+
+    static String customKeyNotUnique() {
+        return "La combinación elegida no es única en uno de los extremos; agregá columnas hasta identificar cada fila.";
+    }
+
     static String unsupportedColumnType(String column, String type) {
         return "Se omitió la comparación: la columna " + column + " tiene un tipo de datos no compatible: " + type + ".";
     }
@@ -52,8 +72,8 @@ final class RowComparisonMessages {
         return "No se pudo contar las filas de " + table + ".";
     }
 
-    static String primaryKeyContainsNull() {
-        return "La clave primaria contiene un valor NULL inesperado.";
+    static String comparisonKeyContainsNull() {
+        return "La clave de comparación contiene un valor NULL inesperado.";
     }
 
     static String notConnected() {

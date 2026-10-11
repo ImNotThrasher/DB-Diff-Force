@@ -3,10 +3,12 @@ package studio.dbdiff;
 import javax.swing.BorderFactory;
 import javax.swing.JTabbedPane;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
 import javax.swing.RowFilter;
@@ -106,9 +108,9 @@ final class RowComparisonPanel extends JPanel {
         long removals = result.changes().stream().filter(change -> change.status() == RowDiff.Status.TARGET_ONLY).count();
         long modifications = result.changes().stream().filter(change -> change.status() == RowDiff.Status.DIFFERENT).count();
         long identical = result.changes().stream().filter(change -> change.status() == RowDiff.Status.IDENTICAL).count();
-        String primaryKey = result.primaryKey().stream().map(RowDiff.Column::name).collect(Collectors.joining(", "));
+        String comparisonKey = result.comparisonKey().stream().map(RowDiff.Column::name).collect(Collectors.joining(", "));
         summary.setText(result.table().name() + " · " + result.changes().size() + " filas · " + (additions + removals + modifications) + " con diferencias");
-        summary.setToolTipText("Clave primaria: " + primaryKey + " · " + result.matchedRows() + " claves coincidentes"
+        summary.setToolTipText("Clave de comparación: " + comparisonKey + " · " + result.matchedRows() + " claves coincidentes"
                 + (result.warning().isBlank() ? "" : " · " + result.warning()));
         export.setEnabled(additions + removals + modifications > 0);
         resultContent.removeAll();
@@ -117,9 +119,7 @@ final class RowComparisonPanel extends JPanel {
             String text = result.matchedRows() == 0 && result.sourceOnly() == 0 && result.targetOnly() == 0
                     ? "Las dos tablas están vacías."
                     : "No se encontraron diferencias en las filas emparejadas.";
-            JLabel empty = new JLabel(text, JLabel.CENTER);
-            empty.setFont(javax.swing.UIManager.getFont("Label.font"));
-            resultContent.add(empty, BorderLayout.CENTER);
+            resultContent.add(stateNote(text, javax.swing.UIManager.getColor("Component.borderColor")), BorderLayout.CENTER);
         } else {
             JPanel toolbar = new JPanel(new BorderLayout(8, 6)); toolbar.setOpaque(false);
             JTabbedPane filters = new JTabbedPane();
@@ -138,9 +138,12 @@ final class RowComparisonPanel extends JPanel {
             search.add(searchField, BorderLayout.CENTER);
             toolbar.add(filters, BorderLayout.NORTH); toolbar.add(search, BorderLayout.CENTER);
             if (!result.warning().isBlank()) {
-                JLabel warning = new JLabel("⚠ Hay diferencias de metadata; revisá el destino antes de exportar cambios de filas.");
+                boolean customKey = result.warning().contains("Clave personalizada verificada")
+                        && !result.warning().contains("metadata de columnas difiere");
+                JLabel warning = new JLabel(customKey ? "ℹ " + result.warning()
+                        : "⚠ Hay diferencias de metadata; revisá el destino antes de exportar cambios de filas.");
                 warning.setToolTipText(result.warning());
-                warning.setForeground(javax.swing.UIManager.getColor("Component.warning.focusedBorderColor"));
+                warning.setForeground(javax.swing.UIManager.getColor(customKey ? "Label.disabledForeground" : "Component.warning.focusedBorderColor"));
                 toolbar.add(warning, BorderLayout.SOUTH);
             }
             resultContent.add(toolbar, BorderLayout.NORTH);
@@ -214,19 +217,67 @@ final class RowComparisonPanel extends JPanel {
         result = null; changesTable = null; searchField = null; changesScroll = null; sorter = null;
         summary.setText("Comparando " + tableName + "…"); export.setEnabled(false);
         resultContent.removeAll();
-        JLabel loading = new JLabel("Comparando filas de " + tableName + "…", JLabel.CENTER);
-        resultContent.add(loading, BorderLayout.CENTER);
+        resultContent.add(stateNote("Comparando filas de " + tableName + "…", InfoNote.accentColor()), BorderLayout.CENTER);
         if (!isExpanded()) setExpanded(true);
         resultContent.revalidate(); resultContent.repaint();
     }
 
     void showMessage(String message) {
+        showMessage(message, false);
+    }
+
+    void showErrorMessage(String message) {
+        showMessage(message, true);
+    }
+
+    private void showMessage(String message, boolean error) {
         result = null; changesTable = null; searchField = null; changesScroll = null; sorter = null;
         summary.setText("Comparación de filas"); export.setEnabled(false);
         resultContent.removeAll();
-        JLabel label = new JLabel(message, JLabel.CENTER);
-        resultContent.add(label, BorderLayout.CENTER);
+        java.awt.Color accent = error
+                ? javax.swing.UIManager.getColor("Component.warning.focusedBorderColor")
+                : InfoNote.accentColor();
+        resultContent.add(stateNote(message, accent), BorderLayout.CENTER);
         resultContent.revalidate(); resultContent.repaint();
+    }
+
+    void showKeyRequired(String table, Runnable configureAction) {
+        showKeyRequired(table, "Esta tabla no tiene clave primaria. Elegí columnas que identifiquen cada fila de forma única.", configureAction);
+    }
+
+    void showKeyRequired(String table, String message, Runnable configureAction) {
+        result = null; changesTable = null; searchField = null; changesScroll = null; sorter = null;
+        summary.setText("La tabla no tiene clave primaria"); export.setEnabled(false);
+        resultContent.removeAll();
+        JPanel prompt = new JPanel();
+        prompt.setLayout(new javax.swing.BoxLayout(prompt, javax.swing.BoxLayout.Y_AXIS));
+        prompt.setOpaque(false);
+        java.awt.Color accent = message.startsWith("Esta tabla no tiene clave primaria")
+                ? InfoNote.accentColor() : javax.swing.UIManager.getColor("Component.warning.focusedBorderColor");
+        JComponent note = stateNote(message, accent);
+        note.setAlignmentX(Component.CENTER_ALIGNMENT);
+        prompt.add(note);
+        prompt.add(javax.swing.Box.createVerticalStrut(8));
+        JButton configure = new JButton("Elegir clave de comparación…");
+        configure.addActionListener(event -> configureAction.run());
+        JPanel action = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        action.setOpaque(false); action.add(configure); action.setAlignmentX(Component.CENTER_ALIGNMENT); prompt.add(action);
+        prompt.add(javax.swing.Box.createVerticalGlue());
+        resultContent.add(prompt, BorderLayout.CENTER);
+        resultContent.revalidate(); resultContent.repaint();
+    }
+
+    private static JComponent stateNote(String message, java.awt.Color accent) {
+        JTextArea label = new JTextArea(message);
+        label.setEditable(false);
+        label.setFocusable(false);
+        label.setLineWrap(true);
+        label.setWrapStyleWord(true);
+        label.setOpaque(false);
+        label.setRows(2);
+        label.setBorder(null);
+        label.setFont(javax.swing.UIManager.getFont("Label.font"));
+        return InfoNote.wrap(label, accent);
     }
 
     private void clear(boolean collapse) {

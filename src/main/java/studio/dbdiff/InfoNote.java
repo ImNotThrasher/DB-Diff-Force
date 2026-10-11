@@ -14,6 +14,10 @@ final class InfoNote {
     private InfoNote() { }
 
     static JPanel wrap(JComponent content) {
+        return wrap(content, accentColor());
+    }
+
+    static JPanel wrap(JComponent content, Color accent) {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setOpaque(false);
         JScrollPane outlined = new JScrollPane(content,
@@ -21,7 +25,7 @@ final class InfoNote {
         outlined.setOpaque(false);
         outlined.getViewport().setOpaque(false);
         outlined.setViewportBorder(new EmptyBorder(4, 8, 4, 8));
-        outlined.putClientProperty(FlatClientProperties.OUTLINE, accentColor());
+        outlined.putClientProperty(FlatClientProperties.OUTLINE, accent != null ? accent : accentColor());
         panel.add(outlined, BorderLayout.CENTER);
         return panel;
     }

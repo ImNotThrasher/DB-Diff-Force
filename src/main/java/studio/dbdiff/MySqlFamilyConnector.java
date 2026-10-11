@@ -210,6 +210,17 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
 
     @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
                                                        BiConsumer<Long, Long> progress) throws SQLException {
+        return compareTableRows(peerConnector, key, maxChanges, List.of(), progress);
+    }
+
+    @Override public RowComparisonMetadata rowComparisonMetadata(SchemaObject.Key key) throws SQLException {
+        requireConnection();
+        if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException(RowComparisonMessages.tablesOnly());
+        return new RowComparisonMetadata(readColumns(key.name()), readPrimaryKey(key.name()));
+    }
+
+    @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
+                                                       List<String> customKeyNames, BiConsumer<Long, Long> progress) throws SQLException {
         requireConnection();
         if (!(peerConnector instanceof MySqlFamilyConnector peer) || peer.engine != engine) throw new SQLException(RowComparisonMessages.matchingEnginesRequired());
         peer.requireConnection();
@@ -221,18 +232,25 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         List<RowDiff.Column> peerPrimaryKey = peer.readPrimaryKey(key.name());
         if (columns.isEmpty()) throw new SQLException(RowComparisonMessages.noVisibleColumns());
         if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey)) throw new SQLException(RowComparisonMessages.columnsOrPrimaryKeyDiffer());
-        if (primaryKey.isEmpty()) throw new SQLException(RowComparisonMessages.primaryKeyRequired());
+        List<RowDiff.Column> comparisonKey = primaryKey;
+        boolean customKey = primaryKey.isEmpty();
+        if (customKey) comparisonKey = selectedKey(columns, customKeyNames);
+        List<RowDiff.Column> rowKey = comparisonKey;
         for (RowDiff.Column column : columns) if (!safeComparable(column.type()))
             throw new SQLException(RowComparisonMessages.unsupportedColumnType(column.name(), column.type()));
-        for (RowDiff.Column column : primaryKey) if (!safeKey(column.type()))
+        for (RowDiff.Column column : comparisonKey) if (!safeKey(column.type()))
             throw new SQLException(RowComparisonMessages.unsupportedPrimaryKeyType(column.name(), column.type()));
+        if (customKey) {
+            validateCustomKey(key.name(), comparisonKey);
+            peer.validateCustomKey(key.name(), comparisonKey);
+        }
 
         progress.accept(0L, -1L);
         long totalRows = countRows(key.name()) + peer.countRows(key.name());
         progress.accept(0L, totalRows);
 
         String columnsSql = columns.stream().map(c -> quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
-        String order = primaryKey.stream().map(c -> isText(c.type()) ? "CAST(" + quote(c.name()) + " AS BINARY)" : quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
+        String order = comparisonKey.stream().map(c -> isText(c.type()) ? "CAST(" + quote(c.name()) + " AS BINARY)" : quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
         String query = "SELECT " + columnsSql + " FROM " + quote(database) + "." + quote(key.name()) + " ORDER BY " + order;
         String peerQuery = "SELECT " + columnsSql + " FROM " + quote(peer.database) + "." + quote(key.name()) + " ORDER BY " + order;
         try (PreparedStatement left = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
@@ -241,13 +259,38 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
             try (ResultSet a = left.executeQuery(); ResultSet b = right.executeQuery()) {
                 // Each connector keeps its dialect-specific ordering and comparison rules;
                 // this shared merge only walks the already sorted cursors and retains results.
-                return RowComparisonMerger.compare(peer.database, key, columns, primaryKey, maxChanges, totalRows,
+                return RowComparisonMerger.compare(peer.database, key, columns, rowKey, maxChanges, totalRows,
                         () -> a.next() ? readRow(a, columns) : null,
                         () -> b.next() ? readRow(b, columns) : null,
-                        (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, primaryKey),
+                        (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, rowKey),
                         (sourceRow, targetRow) -> rowsEqual(sourceRow, targetRow, columns),
-                        progress, "");
+                        progress, customKey ? "Clave personalizada verificada sin valores NULL ni duplicados en ambos extremos." : "");
             }
+        }
+    }
+
+    private List<RowDiff.Column> selectedKey(List<RowDiff.Column> columns, List<String> names) throws SQLException {
+        if (names == null || names.isEmpty()) throw new SQLException(RowComparisonMessages.primaryKeyRequired());
+        List<RowDiff.Column> selected = new ArrayList<>();
+        for (String name : names) {
+            RowDiff.Column column = columns.stream().filter(candidate -> candidate.name().equalsIgnoreCase(name)).findFirst()
+                    .orElseThrow(() -> new SQLException(RowComparisonMessages.customKeyInvalid(name)));
+            selected.add(column);
+        }
+        return List.copyOf(selected);
+    }
+
+    private void validateCustomKey(String table, List<RowDiff.Column> key) throws SQLException {
+        String columns = key.stream().map(column -> quote(column.name())).collect(java.util.stream.Collectors.joining(", "));
+        String nullPredicate = key.stream().map(column -> quote(column.name()) + " IS NULL").collect(java.util.stream.Collectors.joining(" OR "));
+        String qualified = quote(database) + "." + quote(table);
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT 1 FROM " + qualified + " WHERE " + nullPredicate + " LIMIT 1")) {
+            if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyContainsNull());
+        }
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT 1 FROM " + qualified + " GROUP BY " + columns + " HAVING COUNT(*) > 1 LIMIT 1")) {
+            if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyNotUnique());
         }
     }
 
@@ -301,7 +344,7 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         for (RowDiff.Column key : keys) { int c = compareValue(a.get(key.name()), b.get(key.name()), key.type()); if (c != 0) return c; } return 0;
     }
     private static int compareValue(Object a, Object b, String type) throws SQLException {
-        if (a == null || b == null) { if (a == b) return 0; throw new SQLException(RowComparisonMessages.primaryKeyContainsNull()); }
+        if (a == null || b == null) { if (a == b) return 0; throw new SQLException(RowComparisonMessages.comparisonKeyContainsNull()); }
         if (Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric").contains(type)) return new java.math.BigDecimal(a.toString()).compareTo(new java.math.BigDecimal(b.toString()));
         // Para texto, el ORDER BY SQL usa CAST(... AS BINARY); comparar bytes
         // UTF-8 acá mantiene el mismo orden sin depender de la collation.

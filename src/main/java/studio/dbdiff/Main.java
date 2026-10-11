@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -59,6 +60,7 @@ public final class Main {
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final JProgressBar activityIndicator = new JProgressBar();
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
+    private final Map<SchemaObject.Key, List<String>> customRowKeys = new HashMap<>();
     private SchemaSource source;
     private DatabaseConnector target;
     private DatabaseEngine schemaEngine = DatabaseEngine.MARIADB;
@@ -245,6 +247,7 @@ public final class Main {
                     schemaEngine = prepared.engine();
                     sourceDatabase = prepared.sourceName(); targetDatabase = prepared.targetName();
                     sourceObjects = prepared.sourceObjects(); targetObjects = prepared.targetObjects();
+                    customRowKeys.clear();
                     comparisonView.setFlywayMode(selection.mode() == ConnectionDialog.SourceMode.FLYWAY);
                     String sourceServer = selection.mode() == ConnectionDialog.SourceMode.DATABASE
                             ? endpointAddress(selection.origin()) : "";
@@ -608,6 +611,7 @@ public final class Main {
             return;
         }
         DatabaseConnector targetConnector = target;
+        List<String> customKey = customRowKeys.getOrDefault(selected.key(), List.of());
         rowComparisonPanel.showLoading(selected.key().qualifiedName());
         setBusy(true, "Leyendo las filas de " + selected.key().qualifiedName() + "…");
         beginElapsed("Contando filas…");
@@ -616,7 +620,17 @@ public final class Main {
         // antiguas si el usuario seleccionó otra tabla antes de terminar.
         worker.submit(() -> {
             try {
-                RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), Integer.MAX_VALUE,
+                RowComparisonMetadata metadata = sourceConnector.rowComparisonMetadata(selected.key());
+                RowComparisonMetadata peerMetadata = targetConnector.rowComparisonMetadata(selected.key());
+                if (metadata.primaryKey().isEmpty() && peerMetadata.primaryKey().isEmpty() && customKey.isEmpty()) {
+                    SwingUtilities.invokeLater(() -> {
+                        if (request != rowComparisonRequest || !isSelected(selected.key())) return;
+                        rowComparisonPanel.showKeyRequired(selected.key().name(), () -> configureRowComparisonKey(selected));
+                        setBusy(false, "Elegí una clave para comparar las filas");
+                    });
+                    return;
+                }
+                RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), Integer.MAX_VALUE, customKey,
                         (rowsRead, totalRows) -> SwingUtilities.invokeLater(() -> {
                             if (request == rowComparisonRequest && isSelected(selected.key())) showRowProgress(rowsRead, totalRows);
                         }));
@@ -629,14 +643,52 @@ public final class Main {
                         setBusy(false, rowSummary(rows));
                     } catch (RuntimeException renderError) {
                         renderError.printStackTrace();
-                        rowComparisonPanel.showMessage("La comparación terminó, pero no se pudo mostrar el resultado: " + AppUtils.errorMessage(renderError));
+                        rowComparisonPanel.showErrorMessage("La comparación terminó, pero no se pudo mostrar el resultado: " + AppUtils.errorMessage(renderError));
                         setBusy(false, "Filas comparadas; error al mostrar el detalle");
                     }
                 });
             } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> {
                 if (request != rowComparisonRequest || !isSelected(selected.key())) return;
-                setBusy(false, "No se compararon las filas"); rowComparisonPanel.showMessage("No se pudieron comparar las filas: " + AppUtils.errorMessage(ex));
+                String message = AppUtils.errorMessage(ex);
+                if (!customKey.isEmpty() && (message.equals(RowComparisonMessages.customKeyNotUnique())
+                        || message.equals(RowComparisonMessages.customKeyContainsNull()))) {
+                    rowComparisonPanel.showKeyRequired(selected.key().name(), message,
+                            () -> configureRowComparisonKey(selected));
+                    setBusy(false, "La clave elegida no identifica las filas de forma segura");
+                } else {
+                    setBusy(false, "No se compararon las filas");
+                    rowComparisonPanel.showErrorMessage("No se pudieron comparar las filas: " + message);
+                }
             }); }
+        });
+    }
+
+    private void configureRowComparisonKey(DiffEngine.Result selected) {
+        if (!(source instanceof DatabaseConnector sourceConnector) || target == null) return;
+        long request = ++rowComparisonRequest;
+        rowComparisonPanel.showLoading(selected.key().qualifiedName());
+        setBusy(true, "Leyendo columnas disponibles para la clave…");
+        worker.submit(() -> {
+            try {
+                RowComparisonMetadata metadata = sourceConnector.rowComparisonMetadata(selected.key());
+                SwingUtilities.invokeLater(() -> {
+                    if (request != rowComparisonRequest || !isSelected(selected.key())) return;
+                    List<String> chosen = RowComparisonKeyDialog.show(frame, selected.key().name(), metadata.columns(), schemaEngine);
+                    if (chosen == null) {
+                        rowComparisonPanel.showKeyRequired(selected.key().name(), () -> configureRowComparisonKey(selected));
+                        setBusy(false, "Elegí una clave para comparar las filas");
+                        return;
+                    }
+                    customRowKeys.put(selected.key(), chosen);
+                    startRowComparison(selected);
+                });
+            } catch (SQLException | RuntimeException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    if (request != rowComparisonRequest || !isSelected(selected.key())) return;
+                    rowComparisonPanel.showErrorMessage("No se pudieron cargar las columnas: " + AppUtils.errorMessage(ex));
+                    setBusy(false, "No se pudo configurar la clave");
+                });
+            }
         });
     }
 
@@ -682,7 +734,7 @@ public final class Main {
                 if (request != selectionRequest || !isSelected(key)) return;
                 setBusy(false, "No se pudo cargar la definición");
                 comparisonView.showMessage("No se pudo cargar " + key.qualifiedName() + ": " + AppUtils.errorMessage(ex));
-                if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showMessage("No se pudo cargar la tabla para comparar filas.");
+                if (rowComparisonPanel.isExpanded()) rowComparisonPanel.showErrorMessage("No se pudo cargar la tabla para comparar filas.");
             }); }
         });
     }
