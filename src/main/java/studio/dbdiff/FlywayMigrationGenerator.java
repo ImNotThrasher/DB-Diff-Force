@@ -23,6 +23,8 @@ final class FlywayMigrationGenerator {
 
     private FlywayMigrationGenerator() { }
 
+    record VersionSuggestion(String detected, String suggested) { }
+
     static String generate(List<DiffEngine.Result> results, String database, DatabaseEngine engine,
                            Map<SchemaObject.Key, Set<SchemaObject.Key>> oldDependencies,
                            Map<SchemaObject.Key, Set<SchemaObject.Key>> currentDependencies) {
@@ -124,6 +126,19 @@ final class FlywayMigrationGenerator {
     }
 
     static String nextVersion(Path folder) throws IOException {
+        return versionSuggestion(folder).suggested();
+    }
+
+    static VersionSuggestion versionSuggestion(Path folder) throws IOException {
+        MigrationVersion latest = latestVersion(folder);
+        if (latest == null) return new VersionSuggestion(null, "1");
+        String[] parts = latest.getVersion().split("\\.");
+        java.math.BigInteger last = new java.math.BigInteger(parts[parts.length - 1]).add(java.math.BigInteger.ONE);
+        parts[parts.length - 1] = last.toString();
+        return new VersionSuggestion(latest.getVersion(), String.join(".", parts));
+    }
+
+    private static MigrationVersion latestVersion(Path folder) throws IOException {
         if (!Files.isDirectory(folder)) throw new IOException("La carpeta Flyway no existe o no es válida.");
         MigrationVersion latest = null;
         try (var paths = Files.walk(folder)) {
@@ -134,11 +149,7 @@ final class FlywayMigrationGenerator {
                 if (latest == null || found.compareTo(latest) > 0) latest = found;
             }
         }
-        if (latest == null) return "1";
-        String[] parts = latest.getVersion().split("\\.");
-        java.math.BigInteger last = new java.math.BigInteger(parts[parts.length - 1]).add(java.math.BigInteger.ONE);
-        parts[parts.length - 1] = last.toString();
-        return String.join(".", parts);
+        return latest;
     }
 
     static String fileName(String version, String description) {

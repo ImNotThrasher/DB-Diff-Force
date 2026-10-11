@@ -346,7 +346,11 @@ final class ExportDialogs {
         }
         JTextField version = new JTextField(12);
         JTextField description = new JTextField("sincronizar_con_db_actual", 24);
-        try { version.setText(FlywayMigrationGenerator.nextVersion(folder)); }
+        FlywayMigrationGenerator.VersionSuggestion versionSuggestion;
+        try {
+            versionSuggestion = FlywayMigrationGenerator.versionSuggestion(folder);
+            version.setText(versionSuggestion.suggested());
+        }
         catch (IOException ex) { error("No se pudo proponer la versión Flyway", ex); return; }
         JTextArea preview = area();
         preview.setEditable(true);
@@ -370,7 +374,15 @@ final class ExportDialogs {
         c.gridx = 0; c.gridy = 2; c.gridwidth = 2; c.weightx = 1; fields.add(fileName, c);
         JLabel destination = new JLabel("Se guardará en: " + folder.toAbsolutePath().normalize());
         destination.setToolTipText(destination.getText());
-        JPanel north = new JPanel(new BorderLayout(4, 6)); north.add(fields, BorderLayout.CENTER); north.add(destination, BorderLayout.SOUTH);
+        JLabel versionSummary = new JLabel(versionSuggestion.detected() == null
+                ? "No se encontraron migraciones versionadas · Se sugiere la versión inicial V" + versionSuggestion.suggested()
+                : "Última versión detectada: V" + versionSuggestion.detected() + " · Nueva migración sugerida: V" + versionSuggestion.suggested());
+        versionSummary.setForeground(javax.swing.UIManager.getColor("Label.disabledForeground"));
+        JPanel destinationDetails = new JPanel(new GridLayout(0, 1, 0, 3));
+        destinationDetails.setOpaque(false);
+        destinationDetails.add(destination);
+        destinationDetails.add(versionSummary);
+        JPanel north = new JPanel(new BorderLayout(4, 6)); north.add(fields, BorderLayout.CENTER); north.add(destinationDetails, BorderLayout.SOUTH);
         JPanel note = InfoNote.wrap(ReviewDialog.note("Revisá y editá el SQL. El archivo se guardará sin ejecutarse; los bloques REVIEW ONLY son referencias y requieren decisión manual."));
         JPanel wrapper = new JPanel(new BorderLayout(8, 8));
         wrapper.add(north, BorderLayout.NORTH); wrapper.add(new JScrollPane(preview), BorderLayout.CENTER); wrapper.add(note, BorderLayout.SOUTH);
