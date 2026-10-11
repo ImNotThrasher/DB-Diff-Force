@@ -118,15 +118,15 @@ public final class ComparisonView extends JPanel {
 
     private JPanel headerPanel() {
         JPanel panel = new JPanel(new BorderLayout(10, 12));
-        JPanel labels = new JPanel(new BorderLayout(0, 4)); labels.setOpaque(false);
+        JPanel labels = new JPanel(new BorderLayout(10, 0)); labels.setOpaque(false);
         JPanel endpoints = new JPanel(new java.awt.GridLayout(1, 2, 12, 0));
         endpoints.add(endpointPanel("Origen", sourceEndpoint));
         endpoints.add(endpointPanel("Destino", targetEndpoint));
         summary.setRows(1); summary.setEditable(false); summary.setLineWrap(true); summary.setWrapStyleWord(true);
         summary.setOpaque(false); summary.setFont(javax.swing.UIManager.getFont("Label.font")); summary.setBorder(null);
         labels.add(endpoints, BorderLayout.CENTER);
-        modeNotice.setBorder(new EmptyBorder(2, 0, 0, 0));
-        labels.add(modeNotice, BorderLayout.SOUTH);
+        modeNotice.setBorder(new EmptyBorder(0, 0, 0, 0));
+        labels.add(modeNotice, BorderLayout.EAST);
         splitModeButton = new JToggleButton("Dividido", UiIcons.themed(UiIcons.SPLIT, 16));
         unifiedModeButton = new JToggleButton("Unificado", UiIcons.themed(UiIcons.UNIFIED, 16));
         splitModeButton.setIconTextGap(6); unifiedModeButton.setIconTextGap(6);
