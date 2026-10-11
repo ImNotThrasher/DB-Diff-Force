@@ -389,6 +389,8 @@ final class ExportDialogs {
         wrapper.setPreferredSize(new Dimension(900, 650));
         JOptionPane options = new JOptionPane(wrapper, JOptionPane.PLAIN_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
         JDialog dialog = options.createDialog(frame, "Crear migración Flyway");
+        dialog.setResizable(true);
+        dialog.setMinimumSize(new Dimension(700, 500));
         while (true) {
             dialog.setVisible(true);
             Object choice = options.getValue();

@@ -154,8 +154,8 @@ final class SqlSearchOverlay {
             if (background == null) background = getBackground();
             g.setColor(new Color(background.getRed(), background.getGreen(), background.getBlue(), 225));
             g.fillRoundRect(0, 0, getWidth(), getHeight(), 8, 8);
-            g.setColor(UIManager.getColor("Component.borderColor") == null
-                    ? background.darker() : UIManager.getColor("Component.borderColor"));
+            Color border = UIManager.getColor("Component.borderColor");
+            g.setColor(border == null ? background.darker() : border);
             g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
             g.dispose();
             super.paintComponent(graphics);
