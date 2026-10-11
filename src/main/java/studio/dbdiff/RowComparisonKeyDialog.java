@@ -16,7 +16,8 @@ import java.util.Set;
 final class RowComparisonKeyDialog {
     private RowComparisonKeyDialog() { }
 
-    static List<String> show(Window owner, String table, List<RowDiff.Column> columns, DatabaseEngine engine) {
+    static List<String> show(Window owner, String table, List<RowDiff.Column> columns, DatabaseEngine engine,
+                             List<String> currentKey) {
         Set<String> supported = engine == DatabaseEngine.SQLSERVER
                 ? Set.of("tinyint", "smallint", "int", "bigint", "decimal", "numeric", "char", "varchar", "nchar", "nvarchar", "date", "datetime", "datetime2", "smalldatetime", "time", "bit")
                 : Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "char", "varchar", "date", "datetime", "timestamp", "time", "year");
@@ -41,6 +42,14 @@ final class RowComparisonKeyDialog {
                 return this;
             }
         });
+        if (currentKey != null && !currentKey.isEmpty()) {
+            List<Integer> selectedIndices = new java.util.ArrayList<>();
+            for (int index = 0; index < eligible.size(); index++) {
+                String name = eligible.get(index).name();
+                if (currentKey.stream().anyMatch(selected -> selected.equalsIgnoreCase(name))) selectedIndices.add(index);
+            }
+            choices.setSelectedIndices(selectedIndices.stream().mapToInt(Integer::intValue).toArray());
+        }
         JScrollPane scroll = new JScrollPane(choices);
         scroll.setPreferredSize(new java.awt.Dimension(440, Math.min(320, Math.max(150, eligible.size() * 28))));
         JPanel content = new JPanel(new BorderLayout(0, 8));

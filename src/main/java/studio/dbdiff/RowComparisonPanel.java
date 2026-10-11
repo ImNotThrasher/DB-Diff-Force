@@ -44,8 +44,10 @@ final class RowComparisonPanel extends JPanel {
     private final JPanel body = new JPanel(new BorderLayout(0, 7));
     private final JPanel resultContent = new JPanel(new BorderLayout(0, 5));
     private final JButton export = new JButton("Exportar SQL de filas…");
+    private final JButton changeKey = new JButton("Cambiar clave…");
     private final BiConsumer<RowDiff.Result, ExportOptions> exportHandler;
     private final Consumer<Boolean> expandedHandler;
+    private final Consumer<RowDiff.Result> keyConfigurationHandler;
     private JTable changesTable;
     private JTextField searchField;
     private JScrollPane changesScroll;
@@ -60,10 +62,12 @@ final class RowComparisonPanel extends JPanel {
         @Override public String toString() { return text; }
     }
 
-    RowComparisonPanel(BiConsumer<RowDiff.Result, ExportOptions> exportHandler, Consumer<Boolean> expandedHandler) {
+    RowComparisonPanel(BiConsumer<RowDiff.Result, ExportOptions> exportHandler, Consumer<Boolean> expandedHandler,
+                       Consumer<RowDiff.Result> keyConfigurationHandler) {
         super(new BorderLayout(0, 4));
         this.exportHandler = exportHandler;
         this.expandedHandler = expandedHandler;
+        this.keyConfigurationHandler = keyConfigurationHandler;
         JPanel header = new JPanel(new BorderLayout(8, 0));
         header.setOpaque(false);
         disclosure.setHorizontalAlignment(JToggleButton.LEFT);
@@ -74,6 +78,12 @@ final class RowComparisonPanel extends JPanel {
             expandedHandler.accept(disclosure.isSelected());
         });
         header.add(disclosure, BorderLayout.WEST);
+        changeKey.setVisible(false);
+        changeKey.setToolTipText("Cambiar las columnas usadas para emparejar las filas de esta tabla.");
+        changeKey.addActionListener(event -> {
+            if (result != null) keyConfigurationHandler.accept(result);
+        });
+        header.add(changeKey, BorderLayout.EAST);
         header.add(summary, BorderLayout.SOUTH);
         add(header, BorderLayout.NORTH);
 
@@ -103,6 +113,7 @@ final class RowComparisonPanel extends JPanel {
 
     void showResult(RowDiff.Result result) {
         this.result = result;
+        changeKey.setVisible(result.warning().contains("Clave personalizada verificada"));
         changesTable = null; searchField = null; changesScroll = null; sorter = null; activeFilter = null;
         long additions = result.changes().stream().filter(change -> change.status() == RowDiff.Status.SOURCE_ONLY).count();
         long removals = result.changes().stream().filter(change -> change.status() == RowDiff.Status.TARGET_ONLY).count();
@@ -215,6 +226,7 @@ final class RowComparisonPanel extends JPanel {
 
     void showLoading(String tableName) {
         result = null; changesTable = null; searchField = null; changesScroll = null; sorter = null;
+        changeKey.setVisible(false);
         summary.setText("Comparando " + tableName + "…"); export.setEnabled(false);
         resultContent.removeAll();
         resultContent.add(stateNote("Comparando filas de " + tableName + "…", InfoNote.accentColor()), BorderLayout.CENTER);
@@ -232,6 +244,7 @@ final class RowComparisonPanel extends JPanel {
 
     private void showMessage(String message, boolean error) {
         result = null; changesTable = null; searchField = null; changesScroll = null; sorter = null;
+        changeKey.setVisible(false);
         summary.setText("Comparación de filas"); export.setEnabled(false);
         resultContent.removeAll();
         java.awt.Color accent = error
@@ -247,6 +260,7 @@ final class RowComparisonPanel extends JPanel {
 
     void showKeyRequired(String table, String message, Runnable configureAction) {
         result = null; changesTable = null; searchField = null; changesScroll = null; sorter = null;
+        changeKey.setVisible(false);
         summary.setText("La tabla no tiene clave primaria"); export.setEnabled(false);
         resultContent.removeAll();
         JPanel prompt = new JPanel();
@@ -282,6 +296,7 @@ final class RowComparisonPanel extends JPanel {
 
     private void clear(boolean collapse) {
         result = null; summary.setText("Seleccioná una tabla para comparar sus filas.");
+        changeKey.setVisible(false);
         resultContent.removeAll(); changesTable = null; searchField = null; changesScroll = null; sorter = null;
         export.setEnabled(false);
         if (collapse) disclosure.setSelected(false);

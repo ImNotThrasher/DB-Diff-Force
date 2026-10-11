@@ -56,7 +56,8 @@ public final class Main {
     private ObjectCatalogPanel objectCatalog;
     private final ComparisonView comparisonView = new ComparisonView();
     private final RowComparisonPanel rowComparisonPanel = new RowComparisonPanel((rows, options) ->
-            saveRowSql(rows, options.inserts(), options.updates(), options.deletes()), this::rowPanelExpanded);
+            saveRowSql(rows, options.inserts(), options.updates(), options.deletes()), this::rowPanelExpanded,
+            this::reconfigureRowComparisonKey);
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final JProgressBar activityIndicator = new JProgressBar();
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
@@ -673,7 +674,8 @@ public final class Main {
                 RowComparisonMetadata metadata = sourceConnector.rowComparisonMetadata(selected.key());
                 SwingUtilities.invokeLater(() -> {
                     if (request != rowComparisonRequest || !isSelected(selected.key())) return;
-                    List<String> chosen = RowComparisonKeyDialog.show(frame, selected.key().name(), metadata.columns(), schemaEngine);
+                    List<String> existingKey = customRowKeys.getOrDefault(selected.key(), List.of());
+                    List<String> chosen = RowComparisonKeyDialog.show(frame, selected.key().name(), metadata.columns(), schemaEngine, existingKey);
                     if (chosen == null) {
                         rowComparisonPanel.showKeyRequired(selected.key().name(), () -> configureRowComparisonKey(selected));
                         setBusy(false, "Elegí una clave para comparar las filas");
@@ -690,6 +692,11 @@ public final class Main {
                 });
             }
         });
+    }
+
+    private void reconfigureRowComparisonKey(RowDiff.Result rows) {
+        DiffEngine.Result selected = selectedSchemaResult;
+        if (selected != null && selected.key().equals(rows.table())) configureRowComparisonKey(selected);
     }
 
     private void loadCatalogSelection(CatalogItem catalog, long request) {
