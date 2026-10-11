@@ -12,6 +12,7 @@ DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB
 ## Índice
 
 - [Requisitos](#requisitos)
+- [Descargas](#descargas)
 - [Ejecución](#ejecución)
 - [Alcance actual](#alcance-actual)
 - [Diseño](#diseño)
@@ -23,6 +24,10 @@ DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB
 - Apache Maven 3.9 o posterior
 - Acceso a internet en la primera compilación para que Maven descargue las dependencias; después quedan guardadas en la caché local
 - Acceso a dos bases de datos del mismo motor; pueden estar en la misma instancia o en instancias distintas
+
+## Descargas
+
+Descargá el ZIP de la versión desde [Releases](https://github.com/ImNotThrasher/DB-Diff-Force/releases). Extraelo completo y, en Windows, iniciá la aplicación con doble clic en `db-diff-force-<versión>.jar` o en `run.bat`; ambos abren el mismo programa. El JAR necesita Java 21 o posterior y la carpeta `lib` que viene dentro del ZIP, así que no lo separes del resto del paquete.
 
 ## Ejecución
 
