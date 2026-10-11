@@ -118,6 +118,7 @@ final class ObjectCatalogPanel extends JPanel {
     List<Object> selectedValues() { return list.getSelectedValuesList(); }
     Object selectedValue() { return list.getSelectedValue(); }
     List<Object> allItems() { return List.copyOf(allItems); }
+    void clearSelection() { list.clearSelection(); }
     void clearSearch() { search.setText(""); }
     void selectValue(Object value, boolean scrollToValue) { list.setSelectedValue(value, scrollToValue); }
     void setItems(List<?> items) {

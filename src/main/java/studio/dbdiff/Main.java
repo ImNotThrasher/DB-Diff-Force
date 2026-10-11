@@ -348,6 +348,7 @@ public final class Main {
         rowComparisonRequest++;
         Set<SchemaObject.Key> selectedKeys = refreshCatalog && objectCatalog.selectedValues().size() > 1
                 ? selectedObjectKeys() : Set.of();
+        if (refreshCatalog) objectCatalog.clearSelection();
         Set<SchemaObject.Kind> kinds = Set.copyOf(selectedKinds);
         Set<SchemaObject.Key> loadedA = Set.copyOf(loadedSourceKeys), loadedB = Set.copyOf(loadedTargetKeys);
         List<SchemaObject> existingSourceCatalog = sourceObjects, existingTargetCatalog = targetObjects;
@@ -399,7 +400,6 @@ public final class Main {
                     a.forEach(o -> loadedSourceKeys.add(o.key())); b.forEach(o -> loadedTargetKeys.add(o.key()));
                     compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results);
                     rowComparisonPanel.clearResult(false); selectedSchemaResult = null; comparisonView.showMessage("");
-                    if (selectedKeys.size() == 1 && !results.isEmpty()) objectCatalog.selectValue(results.get(0), true);
                     refreshDependencyStatus();
                     setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios");
                 });
