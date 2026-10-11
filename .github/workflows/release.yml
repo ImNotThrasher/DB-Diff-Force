@@ -46,8 +46,14 @@ jobs:
           cat > "$distribution/run.bat" <<'EOF'
           @echo off
           setlocal
-          where javaw >nul 2>nul || (echo Java 21 or later is required and must be available on PATH.& exit /b 1)
-          start "DB-Diff-Force" javaw -jar "%~dp0db-diff-force-${GITHUB_REF_NAME#v}.jar"
+          set "APP_JAR=%~dp0db-diff-force-${GITHUB_REF_NAME#v}.jar"
+          if not exist "%APP_JAR%" (
+            echo Could not find the application JAR: "%APP_JAR%"
+            pause
+            exit /b 1
+          )
+          rem Use the same Windows .jar file association as double-clicking the JAR.
+          start "" "%APP_JAR%"
           endlocal
           EOF
           zip -qr "$distribution.zip" "$distribution"
