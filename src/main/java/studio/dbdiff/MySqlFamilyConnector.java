@@ -235,43 +235,20 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         String order = primaryKey.stream().map(c -> isText(c.type()) ? "CAST(" + quote(c.name()) + " AS BINARY)" : quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
         String query = "SELECT " + columnsSql + " FROM " + quote(database) + "." + quote(key.name()) + " ORDER BY " + order;
         String peerQuery = "SELECT " + columnsSql + " FROM " + quote(peer.database) + "." + quote(key.name()) + " ORDER BY " + order;
-        List<RowDiff.RowChange> changes = new ArrayList<>();
-        // Índices: 0 solo origen, 1 solo destino, 2 distintas, 3 claves emparejadas.
-        long[] counts = new long[4]; boolean truncated = false;
         try (PreparedStatement left = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
              PreparedStatement right = peer.connection.prepareStatement(peerQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
             left.setFetchSize(500); right.setFetchSize(500);
             try (ResultSet a = left.executeQuery(); ResultSet b = right.executeQuery()) {
-                // Ambos cursores llegan ordenados por clave. Avanzarlos como una
-                // fusión evita cargar las tablas completas en memoria.
-                boolean hasA = a.next(), hasB = b.next();
-                long rowsRead = 0, lastReported = 0;
-                while (hasA || hasB) {
-                    rowsRead += (hasA ? 1 : 0) + (hasB ? 1 : 0);
-                    Map<String, Object> rowA = hasA ? readRow(a, columns) : null;
-                    Map<String, Object> rowB = hasB ? readRow(b, columns) : null;
-                    int comparison = !hasA ? 1 : !hasB ? -1 : compareKeys(rowA, rowB, primaryKey);
-                    if (comparison < 0) {
-                        counts[0]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.SOURCE_ONLY, keyOf(rowA, primaryKey), rowA, null)); hasA = a.next();
-                    } else if (comparison > 0) {
-                        counts[1]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.TARGET_ONLY, keyOf(rowB, primaryKey), null, rowB)); hasB = b.next();
-                    } else {
-                        counts[3]++;
-                        if (!rowsEqual(rowA, rowB, columns)) {
-                            counts[2]++; addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.DIFFERENT, keyOf(rowA, primaryKey), rowA, rowB));
-                        } else {
-                            addChange(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.IDENTICAL, keyOf(rowA, primaryKey), rowA, rowB));
-                        }
-                        hasA = a.next(); hasB = b.next();
-                    }
-                    if (rowsRead - lastReported >= 500) { progress.accept(rowsRead, totalRows); lastReported = rowsRead; }
-                }
-                progress.accept(rowsRead, totalRows);
+                // Each connector keeps its dialect-specific ordering and comparison rules;
+                // this shared merge only walks the already sorted cursors and retains results.
+                return RowComparisonMerger.compare(peer.database, key, columns, primaryKey, maxChanges, totalRows,
+                        () -> a.next() ? readRow(a, columns) : null,
+                        () -> b.next() ? readRow(b, columns) : null,
+                        (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, primaryKey),
+                        (sourceRow, targetRow) -> rowsEqual(sourceRow, targetRow, columns),
+                        progress, "");
             }
         }
-        truncated = counts[0] + counts[1] + counts[3] > changes.size();
-        return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
-                truncated ? RowComparisonMessages.truncated(maxChanges) : "");
     }
 
     private long countRows(String table) throws SQLException {
@@ -312,7 +289,6 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
                 + "|datetime_precision=" + String.valueOf(rs.getString("DATETIME_PRECISION"));
     }
 
-    private static void addChange(List<RowDiff.RowChange> changes, int limit, RowDiff.RowChange change) { if (changes.size() < limit) changes.add(change); }
     private static boolean safeComparable(String type) { return safeKey(type) || Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "float", "double", "real", "bit", "char", "varchar", "tinytext", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "enum", "set").contains(type); }
     private static boolean safeKey(String type) { return Set.of("tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "char", "varchar", "date", "datetime", "timestamp", "time", "year").contains(type); }
     private static boolean isText(String type) { return Set.of("char", "varchar").contains(type); }

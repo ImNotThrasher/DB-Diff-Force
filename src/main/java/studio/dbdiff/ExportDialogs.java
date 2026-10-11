@@ -158,7 +158,7 @@ final class ExportDialogs {
                 .filter(DiffEngine.Result.class::isInstance).map(DiffEngine.Result.class::cast).toList();
         DefaultListModel<DiffEngine.Result> exportModel = new DefaultListModel<>();
         JList<DiffEngine.Result> exportSelection = new JList<>(exportModel);
-        exportSelection.setCellRenderer(new Main.ResultRenderer());
+        exportSelection.setCellRenderer(new ObjectCatalogPanel.ResultRenderer());
         exportSelection.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         exportSelection.setVisibleRowCount(4);
         for (DiffEngine.Result result : available) exportModel.addElement(result);

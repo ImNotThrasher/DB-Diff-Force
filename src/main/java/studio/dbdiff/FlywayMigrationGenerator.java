@@ -28,6 +28,8 @@ final class FlywayMigrationGenerator {
                            Map<SchemaObject.Key, Set<SchemaObject.Key>> currentDependencies) {
         List<DiffEngine.Result> reversed = new ArrayList<>(results.size());
         for (DiffEngine.Result result : results) {
+            // The comparison is displayed as Flyway (source) -> database (target),
+            // while this migration must advance Flyway to the current database state.
             DiffEngine.Status status = switch (result.status()) {
                 case SOURCE_ONLY -> DiffEngine.Status.TARGET_ONLY;
                 case TARGET_ONLY -> DiffEngine.Status.SOURCE_ONLY;

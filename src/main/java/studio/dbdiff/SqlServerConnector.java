@@ -434,43 +434,23 @@ public final class SqlServerConnector implements DatabaseConnector {
                 .collect(java.util.stream.Collectors.joining(", "));
         String sourceQuery = "SELECT " + selectedColumns + " FROM " + qualified(database, key) + " ORDER BY " + orderBy;
         String targetQuery = "SELECT " + selectedColumns + " FROM " + qualified(peer.database, key) + " ORDER BY " + orderBy;
-        List<RowDiff.RowChange> changes = new ArrayList<>(); long[] counts = new long[4];
+        List<String> warnings = new ArrayList<>();
+        if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey))
+            warnings.add("La metadata de columnas difiere entre los extremos; revisá los tipos y largos del destino antes de exportar cambios de filas.");
         try (PreparedStatement left = connection.prepareStatement(sourceQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
              PreparedStatement right = peer.connection.prepareStatement(targetQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
             left.setFetchSize(500); right.setFetchSize(500);
             try (ResultSet sourceRows = left.executeQuery(); ResultSet targetRows = right.executeQuery()) {
-                boolean hasSource = sourceRows.next(), hasTarget = targetRows.next();
-                long rowsRead = 0, lastReported = 0;
-                while (hasSource || hasTarget) {
-                    rowsRead += (hasSource ? 1 : 0) + (hasTarget ? 1 : 0);
-                    Map<String, Object> sourceRow = hasSource ? readRow(sourceRows, columns) : null;
-                    Map<String, Object> targetRow = hasTarget ? readRow(targetRows, columns) : null;
-                    int comparison = !hasSource ? 1 : !hasTarget ? -1 : compareKeys(sourceRow, targetRow, primaryKey);
-                    if (comparison < 0) {
-                        counts[0]++; retain(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.SOURCE_ONLY, keyOf(sourceRow, primaryKey), sourceRow, null)); hasSource = sourceRows.next();
-                    } else if (comparison > 0) {
-                        counts[1]++; retain(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.TARGET_ONLY, keyOf(targetRow, primaryKey), null, targetRow)); hasTarget = targetRows.next();
-                    } else {
-                        counts[3]++;
-                        if (!rowsEqual(sourceRow, targetRow, columns)) {
-                            counts[2]++; retain(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.DIFFERENT, keyOf(sourceRow, primaryKey), sourceRow, targetRow));
-                        } else {
-                            retain(changes, maxChanges, new RowDiff.RowChange(RowDiff.Status.IDENTICAL, keyOf(sourceRow, primaryKey), sourceRow, targetRow));
-                        }
-                        hasSource = sourceRows.next(); hasTarget = targetRows.next();
-                    }
-                    if (rowsRead - lastReported >= 500) { progress.accept(rowsRead, totalRows); lastReported = rowsRead; }
-                }
-                progress.accept(rowsRead, totalRows);
+                // SQL Server supplies its own binary key ordering and value comparison;
+                // the common merger streams both sorted cursors without retaining full tables.
+                return RowComparisonMerger.compare(peer.database, key, columns, primaryKey, maxChanges, totalRows,
+                        () -> sourceRows.next() ? readRow(sourceRows, columns) : null,
+                        () -> targetRows.next() ? readRow(targetRows, columns) : null,
+                        (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, primaryKey),
+                        (sourceRow, targetRow) -> rowsEqual(sourceRow, targetRow, columns),
+                        progress, String.join(" ", warnings));
             }
         }
-        boolean truncated = counts[0] + counts[1] + counts[3] > changes.size();
-        List<String> warnings = new ArrayList<>();
-        if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey))
-            warnings.add("La metadata de columnas difiere entre los extremos; revisá los tipos y largos del destino antes de exportar cambios de filas.");
-        if (truncated) warnings.add(RowComparisonMessages.truncated(maxChanges));
-        return new RowDiff.Result(peer.database, key, columns, primaryKey, changes, counts[0], counts[1], counts[2], counts[3], truncated,
-                String.join(" ", warnings));
     }
 
     private static boolean compatibleColumns(List<RowDiff.Column> source, List<RowDiff.Column> target) {
@@ -594,7 +574,6 @@ public final class SqlServerConnector implements DatabaseConnector {
 
     private static boolean isText(String type) { return Set.of("char", "varchar", "nchar", "nvarchar").contains(type); }
 
-    private static void retain(List<RowDiff.RowChange> changes, int limit, RowDiff.RowChange change) { if (changes.size() < limit) changes.add(change); }
 
     private static String typeDeclaration(String type, int length, int precision, int scale, boolean userDefined, String schema) {
         if (userDefined) return quote(schema) + "." + quote(type);
