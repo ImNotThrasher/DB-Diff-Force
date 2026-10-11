@@ -34,6 +34,26 @@ Para reconstruir el esquema de migraciones Flyway, elegí **Migraciones Flyway**
 
 Al conectar, la lista de objetos queda marcada como **sin comparar** hasta que se ejecute el análisis. Usá Ctrl+clic o Mayús+clic para seleccionar objetos. **Comparar** analiza los objetos seleccionados; si no seleccionás ninguno, analiza todos los tipos habilitados. Para comparar filas, seleccioná una tabla que ya se haya comparado. **Exportar SQL** solo incluye los resultados seleccionados; si no seleccionaste ninguno, la aplicación te pide que elijas en vez de exportarlo todo.
 
+## Capturas
+
+### Nueva comparación
+
+Configuración de una comparación entre dos bases de datos.
+
+<img src="docs/screenshots/nueva-comparacion.png" alt="Diálogo Nueva comparación con las conexiones de origen y destino" width="900">
+
+### Comparación de esquema
+
+Definiciones de origen y destino con los cambios resaltados para revisión.
+
+<img src="docs/screenshots/comparacion-esquema.png" alt="Comparación de definiciones SQL con diferencias resaltadas" width="900">
+
+### Exportar esquema
+
+Búsqueda y selección de objetos con una vista previa del SQL antes de guardarlo.
+
+<img src="docs/screenshots/exportar-esquema.png" alt="Diálogo Exportar esquema con selección de objetos y vista previa SQL" width="900">
+
 ## Alcance actual
 
 - Conexiones JDBC a MariaDB, MySQL y SQL Server. SQL Server usa el controlador JDBC oficial de Microsoft y autenticación SQL con usuario y contraseña. Ambos extremos deben usar el mismo motor.
