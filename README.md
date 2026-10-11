@@ -80,7 +80,7 @@ Los permisos o la versión del servidor pueden impedir leer metadatos o definici
 
 ## Diseño
 
-La aplicación usa Java 21 y Swing. Maven administra las dependencias JDBC y prepara un JAR ejecutable con sus bibliotecas en `target/lib`. El acceso JDBC y la extracción de objetos se implementan detrás de `DatabaseConnector`; MariaDB y MySQL comparten una implementación y SQL Server tiene su propio conector. La interfaz ejecuta las operaciones de base de datos fuera del hilo de eventos y administra las contraseñas temporales usadas para iniciar sesión.
+La aplicación usa Java 21 y Swing, con FlatLaf para el tema visual. Flyway reconstruye esquemas desde migraciones; los controladores JDBC permiten conectarse a los motores soportados. Maven administra estas dependencias y prepara un JAR ejecutable con sus bibliotecas en `target/lib`. El acceso JDBC y la extracción de objetos se implementan detrás de `DatabaseConnector`; MariaDB y MySQL comparten una implementación y SQL Server tiene su propio conector. La interfaz ejecuta las operaciones de base de datos fuera del hilo de eventos y administra las contraseñas temporales usadas para iniciar sesión.
 
 ## Licencia
 
