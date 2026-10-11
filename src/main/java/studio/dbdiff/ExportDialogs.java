@@ -298,15 +298,38 @@ final class ExportDialogs {
         reviewTabs.addTab("SQL", new JScrollPane(preview));
         reviewTabs.addTab("Plan y dependencias", new JScrollPane(planPreview));
         previewPanel.add(reviewTabs, BorderLayout.CENTER);
-        previewPanel.setMinimumSize(new Dimension(360, 250));
+        selectionPanel.setMinimumSize(new Dimension(0, 0));
+        previewPanel.setMinimumSize(new Dimension(0, 0));
         JSplitPane exportSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, selectionPanel, previewPanel);
         exportSplit.setContinuousLayout(true);
-        exportSplit.setOneTouchExpandable(true);
         exportSplit.setResizeWeight(.30);
         exportSplit.setDividerSize(9);
         exportSplit.setDividerLocation(.30);
+        JButton restoreSplit = new JButton("Restaurar vista");
+        restoreSplit.setToolTipText("Mostrar nuevamente los dos paneles con el divisor centrado.");
+        JPanel splitControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        splitControls.add(restoreSplit);
+        Runnable updateSplitControls = () -> {
+            int location = exportSplit.getDividerLocation();
+            int maxLocation = Math.max(0, exportSplit.getHeight() - exportSplit.getDividerSize());
+            boolean objectsHidden = maxLocation > 0 && location <= 1;
+            boolean previewHidden = maxLocation > 0 && location >= maxLocation - 1;
+            splitControls.setVisible(objectsHidden || previewHidden);
+        };
+        restoreSplit.addActionListener(event -> {
+            exportSplit.setDividerLocation(.30);
+            updateSplitControls.run();
+        });
+        exportSplit.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY,
+                event -> updateSplitControls.run());
+        exportSplit.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override public void componentResized(java.awt.event.ComponentEvent event) { updateSplitControls.run(); }
+        });
         refreshVisibleItems.run();
-        JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(exportSplit, BorderLayout.CENTER); wrapper.setPreferredSize(new Dimension(900, 740));
+        JPanel splitArea = new JPanel(new BorderLayout(0, 4));
+        splitArea.add(splitControls, BorderLayout.NORTH);
+        splitArea.add(exportSplit, BorderLayout.CENTER);
+        JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(splitArea, BorderLayout.CENTER); wrapper.setPreferredSize(new Dimension(900, 740));
         wrapper.add(warning, BorderLayout.SOUTH);
         if (!ReviewDialog.confirm(frame, "Exportar esquema", wrapper, new Dimension(980, 780), "Guardar SQL…",
                 () -> selection.canExport(ops),
