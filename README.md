@@ -82,6 +82,6 @@ La aplicación usa Java 21 y Swing. Maven administra las dependencias JDBC y pre
 
 ## Licencia
 
-Copyright (C) 2026 Sergio Robles.
+Copyright (C) 2026 [@ImNotThrasher](https://github.com/ImNotThrasher).
 
 El código propio de DB-Diff-Force se distribuye bajo la **GNU General Public License v3.0 solamente (GPL-3.0-only)**. Se permite el uso comercial. Si distribuís una versión modificada, debés conservar esta licencia y ofrecer el código fuente correspondiente conforme a sus términos. Los cambios que se usan de forma privada no requieren publicarse. El texto completo está en [`LICENSE`](LICENSE); el JAR también incluye una copia en `META-INF/LICENSE`. Las dependencias de terceros conservan sus propias licencias y avisos.
