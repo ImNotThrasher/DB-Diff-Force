@@ -300,6 +300,7 @@ public final class Main {
                     if (request != comparisonRequest) { prepared.close(); return; }
                     closeConnectors();
                     currentSelection = selection;
+                    updateExportButton();
                     if (rememberLastComparison) saveLastComparison(selection);
                     source = prepared.source(); target = prepared.target();
                     sourceDependencyReport = prepared.sourceDependencies(); targetDependencyReport = prepared.targetDependencies();
@@ -307,6 +308,7 @@ public final class Main {
                     schemaEngine = prepared.engine();
                     sourceDatabase = prepared.sourceName(); targetDatabase = prepared.targetName();
                     sourceObjects = prepared.sourceObjects(); targetObjects = prepared.targetObjects();
+                    comparisonView.setFlywayMode(selection.mode() == ConnectionDialog.SourceMode.FLYWAY);
                     String sourceServer = selection.mode() == ConnectionDialog.SourceMode.DATABASE
                             ? endpointAddress(selection.origin()) : "";
                     comparisonView.setDatabases(sourceDatabase, targetDatabase, sourceServer, endpointAddress(selection.destination()));
@@ -758,6 +760,7 @@ public final class Main {
     }
 
     private void setRowComparisonVisible(boolean visible) {
+        if (currentSelection != null && currentSelection.mode() == ConnectionDialog.SourceMode.FLYWAY) visible = false;
         boolean wasVisible = rowComparisonPanel.isVisible();
         if (wasVisible == visible) return;
         if (!visible) {
@@ -944,9 +947,73 @@ public final class Main {
     }
 
     private void export() {
+        if (currentSelection != null && currentSelection.mode() == ConnectionDialog.SourceMode.FLYWAY) {
+            createFlywayMigration();
+            return;
+        }
         exportDialogs().export(new ExportDialogs.SchemaContext(List.copyOf(allResultItems), resultList.getSelectedValuesList(),
                 targetDatabase, sourceObjects, targetObjects, sourceDependencies, targetDependencies,
                 sourceDependencyReport, targetDependencyReport));
+    }
+
+    private void updateExportButton() {
+        if (exportButton == null) return;
+        boolean flyway = currentSelection != null && currentSelection.mode() == ConnectionDialog.SourceMode.FLYWAY;
+        exportButton.setText(flyway ? "Migración Flyway: origen → destino" : "Exportar esquema");
+        exportButton.setToolTipText(flyway
+                ? "Genera una migración nueva para llevar el esquema Flyway de origen al estado actual de la base de datos destino seleccionada. No modifica ni ejecuta SQL sobre la base destino."
+                : "Exportar SQL para aplicar cambios del origen sobre el destino.");
+    }
+
+    private void createFlywayMigration() {
+        if (source == null || target == null || currentSelection == null || currentSelection.sourceFolder() == null) return;
+        if (schemaComparisonRunning) {
+            JOptionPane.showMessageDialog(frame, "Esperá a que termine la comparación actual antes de generar la migración.",
+                    "Comparación en curso", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        long request = ++comparisonRequest;
+        SchemaSource sourceConnector = source;
+        DatabaseConnector targetConnector = target;
+        Path folder = currentSelection.sourceFolder();
+        String database = targetDatabase;
+        DatabaseEngine engine = schemaEngine;
+        schemaComparisonRunning = true;
+        setBusy(true, "Preparando migración Flyway con el catálogo completo…");
+        worker.submit(() -> {
+            try {
+                Set<SchemaObject.Kind> allKinds = EnumSet.allOf(SchemaObject.Kind.class);
+                List<SchemaObject> oldCatalog = sourceConnector.listObjects();
+                ensureComparisonCurrent(request);
+                List<SchemaObject> currentCatalog = targetConnector.listObjects();
+                ensureComparisonCurrent(request);
+                List<SchemaObject> oldSchema = loadSelected(sourceConnector, oldCatalog, allKinds, Set.of(), Set.of(), ignored -> { }, () -> request == comparisonRequest);
+                List<SchemaObject> currentSchema = loadSelected(targetConnector, currentCatalog, allKinds, Set.of(), Set.of(), ignored -> { }, () -> request == comparisonRequest);
+                ensureComparisonCurrent(request);
+                List<DiffEngine.Result> differences = new DiffEngine().compare(oldSchema, currentSchema, allKinds, Set.of());
+                DependencyReport oldReport = safeDependencyReport(sourceConnector);
+                DependencyReport currentReport = safeDependencyReport(targetConnector);
+                String sql = FlywayMigrationGenerator.generate(differences, database, engine,
+                        oldReport.dependencies(), currentReport.dependencies());
+                SwingUtilities.invokeLater(() -> {
+                    if (request != comparisonRequest) return;
+                    schemaComparisonRunning = false;
+                    setBusy(false, "Migración Flyway preparada · " + differences.stream().filter(result -> result.status() != DiffEngine.Status.IDENTICAL).count() + " objetos con cambios");
+                    if (differences.stream().allMatch(result -> result.status() == DiffEngine.Status.IDENTICAL)) {
+                        JOptionPane.showMessageDialog(frame, "El esquema Flyway ya coincide con la base actual.", "Sin cambios", JOptionPane.INFORMATION_MESSAGE);
+                        return;
+                    }
+                    exportDialogs().createFlywayMigration(folder, sql);
+                });
+            } catch (SQLException | RuntimeException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    if (request != comparisonRequest) return;
+                    schemaComparisonRunning = false;
+                    setBusy(false, "No se pudo preparar la migración Flyway");
+                    error("No se pudieron cargar todos los objetos para la migración", ex);
+                });
+            }
+        });
     }
 
     private void setBusy(boolean busy, String text) {

@@ -254,6 +254,69 @@ final class ExportDialogs {
         try { Files.writeString(chooser.getSelectedFile().toPath(), preview.getText(), StandardCharsets.UTF_8); JOptionPane.showMessageDialog(frame, "Se guardó el SQL. No se ejecutó.", "Exportación lista", JOptionPane.INFORMATION_MESSAGE); }
         catch (IOException ex) { error("No se pudo guardar la exportación", ex); }
     }
+
+    void createFlywayMigration(Path folder, String sql) {
+        if (!Files.isDirectory(folder)) {
+            error("Carpeta Flyway no válida", new IOException("La carpeta de migraciones ya no existe o no está disponible."));
+            return;
+        }
+        JTextField version = new JTextField(12);
+        JTextField description = new JTextField("sincronizar_con_db_actual", 24);
+        try { version.setText(FlywayMigrationGenerator.nextVersion(folder)); }
+        catch (IOException ex) { error("No se pudo proponer la versión Flyway", ex); return; }
+        JTextArea preview = area();
+        preview.setEditable(true);
+        preview.setText(sql);
+        preview.setCaretPosition(0);
+        JLabel fileName = new JLabel();
+        Runnable updateFileName = () -> {
+            try { fileName.setText("Archivo: " + FlywayMigrationGenerator.fileName(version.getText().trim(), description.getText().trim())); }
+            catch (IllegalArgumentException ex) { fileName.setText("Nombre de archivo inválido: " + ex.getMessage()); }
+        };
+        version.getDocument().addDocumentListener(documentListener(updateFileName));
+        description.getDocument().addDocumentListener(documentListener(updateFileName));
+        updateFileName.run();
+
+        JPanel fields = new JPanel(new GridBagLayout());
+        GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(3, 4, 3, 8); c.anchor = GridBagConstraints.WEST;
+        c.gridx = 0; c.gridy = 0; fields.add(new JLabel("Versión"), c);
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; fields.add(version, c);
+        c.gridx = 0; c.gridy = 1; c.weightx = 0; c.fill = GridBagConstraints.NONE; fields.add(new JLabel("Descripción"), c);
+        c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; fields.add(description, c);
+        c.gridx = 0; c.gridy = 2; c.gridwidth = 2; c.weightx = 1; fields.add(fileName, c);
+        JLabel destination = new JLabel("Se guardará en: " + folder.toAbsolutePath().normalize());
+        destination.setToolTipText(destination.getText());
+        JPanel north = new JPanel(new BorderLayout(4, 6)); north.add(fields, BorderLayout.CENTER); north.add(destination, BorderLayout.SOUTH);
+        JTextArea note = ReviewDialog.note("Revisá y editá el SQL. El archivo se guardará sin ejecutarse; los bloques REVIEW ONLY son referencias y requieren decisión manual.");
+        JPanel wrapper = new JPanel(new BorderLayout(8, 8));
+        wrapper.add(north, BorderLayout.NORTH); wrapper.add(new JScrollPane(preview), BorderLayout.CENTER); wrapper.add(note, BorderLayout.SOUTH);
+        wrapper.setPreferredSize(new Dimension(900, 650));
+        JOptionPane options = new JOptionPane(wrapper, JOptionPane.PLAIN_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
+        JDialog dialog = options.createDialog(frame, "Crear migración Flyway");
+        while (true) {
+            dialog.setVisible(true);
+            Object choice = options.getValue();
+            if (!(choice instanceof Integer value) || value != JOptionPane.OK_OPTION) { dialog.dispose(); return; }
+            try {
+                Path saved = FlywayMigrationGenerator.save(folder, version.getText().trim(), description.getText().trim(), preview.getText());
+                dialog.dispose();
+                JOptionPane.showMessageDialog(frame, "Se guardó la migración:\n" + saved + "\nNo se ejecutó.", "Migración Flyway lista", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            } catch (IOException | IllegalArgumentException ex) {
+                options.setValue(JOptionPane.UNINITIALIZED_VALUE);
+                JOptionPane.showMessageDialog(dialog, AppUtils.errorMessage(ex), "No se pudo guardar la migración Flyway", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    private static javax.swing.event.DocumentListener documentListener(Runnable action) {
+        return new javax.swing.event.DocumentListener() {
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent event) { action.run(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent event) { action.run(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent event) { action.run(); }
+        };
+    }
+
     private void error(String title, Exception ex) {
         JOptionPane.showMessageDialog(frame, AppUtils.errorMessage(ex), title, JOptionPane.ERROR_MESSAGE);
     }

@@ -23,6 +23,7 @@ public final class ComparisonView extends JPanel {
     private final JTextArea emptyMessage = new JTextArea();
     private final JLabel sourceEndpoint = new JLabel("Sin seleccionar");
     private final JLabel targetEndpoint = new JLabel("Sin seleccionar");
+    private final JLabel modeNotice = new JLabel("Comparación de esquema; no compara datos de filas.");
     private final JTextArea summary = new JTextArea();
     private final DiffCodeEditor source = new DiffCodeEditor(false, true);
     private final DiffCodeEditor target = new DiffCodeEditor(false, false);
@@ -51,6 +52,9 @@ public final class ComparisonView extends JPanel {
         emptyMessage.setWrapStyleWord(true);
         emptyMessage.setBorder(new EmptyBorder(24, 24, 24, 24));
         cards.add(emptyMessage, EMPTY);
+        modeNotice.setVisible(false);
+        modeNotice.setFont(javax.swing.UIManager.getFont("Label.font"));
+        modeNotice.setForeground(javax.swing.UIManager.getColor("Label.disabledForeground"));
         add(cards, BorderLayout.CENTER);
         showMode(SPLIT);
         syncVerticalScroll(source, target);
@@ -69,8 +73,14 @@ public final class ComparisonView extends JPanel {
         targetHeading.setText("DESTINO · " + displayName(targetName));
     }
 
+    public void setFlywayMode(boolean flyway) {
+        modeNotice.setVisible(flyway);
+        revalidate();
+    }
+
     public void setThemeColors(boolean dark) {
         this.dark = dark;
+        modeNotice.setForeground(javax.swing.UIManager.getColor("Label.disabledForeground"));
         for (DiffCodeEditor editor : List.of(source, target, unified)) editor.setThemeColors(dark);
         if (splitModeButton != null) {
             AppTheme.styleToggleButton(splitModeButton, dark);
@@ -115,6 +125,8 @@ public final class ComparisonView extends JPanel {
         summary.setRows(1); summary.setEditable(false); summary.setLineWrap(true); summary.setWrapStyleWord(true);
         summary.setOpaque(false); summary.setFont(javax.swing.UIManager.getFont("Label.font")); summary.setBorder(null);
         labels.add(endpoints, BorderLayout.CENTER);
+        modeNotice.setBorder(new EmptyBorder(2, 0, 0, 0));
+        labels.add(modeNotice, BorderLayout.SOUTH);
         splitModeButton = new JToggleButton("Dividido", UiIcons.themed(UiIcons.SPLIT, 16));
         unifiedModeButton = new JToggleButton("Unificado", UiIcons.themed(UiIcons.UNIFIED, 16));
         splitModeButton.setIconTextGap(6); unifiedModeButton.setIconTextGap(6);
