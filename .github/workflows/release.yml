@@ -35,28 +35,15 @@ jobs:
       - name: Build and run tests
         run: mvn --batch-mode verify
 
-      - name: Package runnable distribution
+      - name: Package multiplatform distribution
         shell: bash
         run: |
           distribution="DB-Diff-Force-${GITHUB_REF_NAME}"
           mkdir "$distribution"
           cp "target/db-diff-force-${GITHUB_REF_NAME#v}.jar" "$distribution/"
           cp -R target/lib "$distribution/"
-          cp LICENSE README.md "$distribution/"
-          jar_file="db-diff-force-${GITHUB_REF_NAME#v}.jar"
-          cat > "$distribution/run.bat" <<EOF
-          @echo off
-          setlocal
-          set "APP_JAR=%~dp0${jar_file}"
-          if not exist "%APP_JAR%" (
-            echo Could not find the application JAR: "%APP_JAR%"
-            pause
-            exit /b 1
-          )
-          rem Use the same Windows .jar file association as double-clicking the JAR.
-          start "" "%APP_JAR%"
-          endlocal
-          EOF
+          cp LICENSE README.md run.bat run.sh "$distribution/"
+          chmod +x "$distribution/run.sh"
           zip -qr "$distribution.zip" "$distribution"
 
       - name: Attach files to GitHub Release

@@ -27,13 +27,15 @@ DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB
 
 ## Descargas
 
-Descargá el ZIP de la versión desde [Releases](https://github.com/ImNotThrasher/DB-Diff-Force/releases). Extraelo completo y, en Windows, iniciá la aplicación con doble clic en `db-diff-force-<versión>.jar` o en `run.bat`; ambos abren el mismo programa. El JAR necesita Java 21 o posterior y la carpeta `lib` que viene dentro del ZIP, así que no lo separes del resto del paquete.
+Descargá el ZIP de la versión desde [Releases](https://github.com/ImNotThrasher/DB-Diff-Force/releases) y extraelo completo. El paquete funciona en Windows, Linux y macOS con Java 21 o posterior. En Windows, abrí el JAR con doble clic o ejecutá `run.bat`; en Linux y macOS, ejecutá `sh run.sh`. Mantené el JAR y los lanzadores junto a la carpeta `lib`, que contiene las dependencias.
 
 ## Ejecución
 
-En Windows, ejecutá `run.bat`. El script compila el JAR ejecutable y abre la aplicación en una ventana independiente. La terminal vuelve a mostrar el prompt mientras la aplicación queda abierta. En macOS o Linux, ejecutá `./run.sh`; el script compila y abre la aplicación. Para compilar sin abrirla, ejecutá `mvn package`: la aplicación queda en `target/db-diff-force-0.2.0.jar`, con los controladores JDBC en `target/lib`. Maven descarga los controladores y sus dependencias a la caché local. Las credenciales no se guardan allí.
+Desde el código fuente, ejecutá `run.bat` en Windows o `sh run.sh` en macOS y Linux; ambos compilan el JAR y abren la aplicación, y requieren JDK 21 o posterior y Maven 3.9 o posterior. En el ZIP de una Release, los mismos lanzadores abren el JAR ya compilado, sin Maven. Para compilar sin abrirla, ejecutá `mvn package`: la aplicación queda en `target/db-diff-force-0.2.0.jar`, con los controladores JDBC en `target/lib`. Maven descarga los controladores y sus dependencias a la caché local. Las credenciales no se guardan allí.
 
 En **Nueva comparación**, elegí el motor y el tipo de origen. Si elegís **Base de datos**, completá origen y destino; pueden apuntar al mismo servidor con dos bases distintas o a servidores diferentes. Al pulsar **Probar conexión**, se cargan las bases visibles para esa cuenta y luego elegís una para cada lado. En Snapshot SQL y Flyway, el panel de conexión del origen se reemplaza por la selección de una carpeta; se conecta solo la base destino. En esta versión, ambos extremos usan el mismo motor. Los perfiles guardados se pueden elegir por separado para origen y destino en el modo de bases; además de los datos de conexión, permiten definir un ambiente y un color identificador. Estos valores se guardan en `~/.db-diff-studio/connections.properties` para conservar los perfiles existentes. Si activás **Recordar contraseña**, se guarda en el almacén seguro del sistema operativo; si no, hay que ingresarla en cada sesión. TLS se puede habilitar por conexión.
+
+El selector **Comparación guardada** permite guardar una combinación de origen y destino con un nombre —por ejemplo, `Desarrollo → QA`— y cargarla después desde **Nueva comparación**. También admite orígenes Snapshot SQL y Flyway, guardando la carpeta seleccionada. Estas combinaciones no guardan contraseñas: al cargarlas, la aplicación intenta recuperar las credenciales del almacén seguro si hay perfiles de conexión coincidentes; si no, hay que ingresarlas. La opción **Recordar y reconectar la última comparación al iniciar** de Configuración funciona por separado: intenta abrir la última comparación usada aunque no se haya guardado con nombre. Si faltan credenciales seguras o la carpeta de origen ya no existe, abre el diálogo para corregir la configuración.
 
 En **Nueva comparación**, elegí el tipo de origen. **Base de datos** muestra los datos de conexión para origen y destino. **Snapshot SQL** oculta la conexión del origen y permite elegir una carpeta con archivos `.sql`; cada archivo debe contener una definición `CREATE` completa de un solo objeto. No es un dump arbitrario ni se ejecuta el SQL. Se leen tablas, vistas, procedimientos, funciones y triggers. Los archivos se ordenan por ruta, y una segunda definición del mismo objeto se reporta como ambigua.
 
@@ -82,6 +84,6 @@ La aplicación usa Java 21 y Swing. Maven administra las dependencias JDBC y pre
 
 ## Licencia
 
-Copyright (C) 2026 Sergio Robles.
+Copyright (C) 2026 [@ImNotThrasher](https://github.com/ImNotThrasher).
 
 El código propio de DB-Diff-Force se distribuye bajo la **GNU General Public License v3.0 solamente (GPL-3.0-only)**. Se permite el uso comercial. Si distribuís una versión modificada, debés conservar esta licencia y ofrecer el código fuente correspondiente conforme a sus términos. Los cambios que se usan de forma privada no requieren publicarse. El texto completo está en [`LICENSE`](LICENSE); el JAR también incluye una copia en `META-INF/LICENSE`. Las dependencias de terceros conservan sus propias licencias y avisos.

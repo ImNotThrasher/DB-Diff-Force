@@ -60,6 +60,7 @@ public final class Main {
             this::reconfigureRowComparisonKey);
     private final JLabel connectionStatus = new JLabel("Sin conexión");
     private final JProgressBar activityIndicator = new JProgressBar();
+    private final JButton cancelRowsButton = new JButton("Cancelar");
     private final EnumSet<SchemaObject.Kind> selectedKinds = EnumSet.allOf(SchemaObject.Kind.class);
     private final Map<SchemaObject.Key, List<String>> customRowKeys = new HashMap<>();
     private SchemaSource source;
@@ -83,7 +84,7 @@ public final class Main {
     private JPanel headerPanel, leftPanel;
     private JSplitPane workspaceSplit;
     private JSplitPane comparisonSplit;
-    private JButton compareButton, exportButton;
+    private JButton compareButton, exportButton, reportButton;
     private final Set<SchemaObject.Key> comparedKeys = new TreeSet<>();
     private final Set<SchemaObject.Key> loadedSourceKeys = ConcurrentHashMap.newKeySet();
     private final Set<SchemaObject.Key> loadedTargetKeys = ConcurrentHashMap.newKeySet();
@@ -91,6 +92,7 @@ public final class Main {
     private ConnectionDialog.Selection currentSelection;
     private long selectionRequest;
     private long rowComparisonRequest;
+    private volatile RowComparisonCancellation activeRowCancellation;
     private volatile long comparisonRequest;
     private long elapsedStartedAtNanos;
     private String elapsedDetail = "";
@@ -151,7 +153,10 @@ public final class Main {
         exportButton = button("Exportar esquema", false); exportButton.setIcon(UiIcons.themed(UiIcons.EXPORT, 16)); exportButton.setIconTextGap(7); exportButton.addActionListener(e -> export());
         JButton settings = button("Configuración", false); settings.setIcon(UiIcons.themed(UiIcons.SETTINGS, 16)); settings.setIconTextGap(6);
         settings.setToolTipText("Apariencia, ventana y comportamiento del comparador"); settings.addActionListener(e -> showSettings());
-        actions.add(connect); actions.add(compareButton); actions.add(exportButton); actions.add(settings); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
+        reportButton = button("Exportar informe", false); reportButton.setIcon(UiIcons.themed(UiIcons.EXPORT, 16));
+        reportButton.setToolTipText("Guardar un informe HTML de la comparación actual, sin datos de filas ni script SQL de aplicación.");
+        reportButton.addActionListener(e -> exportReport()); reportButton.setEnabled(false);
+        actions.add(connect); actions.add(compareButton); actions.add(exportButton); actions.add(reportButton); actions.add(settings); panel.add(brand, BorderLayout.WEST); panel.add(actions, BorderLayout.EAST); return panel;
     }
 
     private JComponent content() {
@@ -179,7 +184,12 @@ public final class Main {
         activityIndicator.setIndeterminate(true); activityIndicator.setBorderPainted(false);
         activityIndicator.setPreferredSize(new Dimension(130, 12)); activityIndicator.setVisible(false);
         activityIndicator.setToolTipText("La operación sigue ejecutándose en segundo plano.");
-        p.add(activityIndicator, BorderLayout.EAST);
+        JPanel activity = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); activity.setOpaque(false);
+        activityIndicator.setPreferredSize(new Dimension(130, 12));
+        cancelRowsButton.setToolTipText("Detener la comparación de filas en curso");
+        cancelRowsButton.setVisible(false); cancelRowsButton.addActionListener(event -> cancelRowComparison());
+        activity.add(activityIndicator); activity.add(cancelRowsButton);
+        p.add(activity, BorderLayout.EAST);
         connectionStatus.setFont(javax.swing.UIManager.getFont("Label.font"));
         return p;
     }
@@ -224,7 +234,7 @@ public final class Main {
                 return;
             }
         }
-        comparisonRequest++; selectionRequest++; rowComparisonRequest++;
+        comparisonRequest++; selectionRequest++; cancelActiveRowComparison(); rowComparisonRequest++;
         schemaComparisonRunning = false;
         String modeStatus = switch (selection.mode()) {
             case DATABASE -> "Conectando las dos bases…";
@@ -349,6 +359,7 @@ public final class Main {
         if (source == null || target == null) { JOptionPane.showMessageDialog(frame, "Conectá ambas bases antes de comparar.", "Bases sin conexión", JOptionPane.INFORMATION_MESSAGE); return; }
         long request = ++comparisonRequest;
         selectionRequest++;
+        cancelActiveRowComparison();
         rowComparisonRequest++;
         Set<SchemaObject.Key> selectedKeys = refreshCatalog && objectCatalog.selectedValues().size() > 1
                 ? selectedObjectKeys() : Set.of();
@@ -541,6 +552,7 @@ public final class Main {
     private void selectResult(ListSelectionEvent e) {
         if (e.getValueIsAdjusting()) return;
         long request = ++selectionRequest;
+        cancelActiveRowComparison();
         rowComparisonRequest++;
         selectedSchemaResult = null;
         rowComparisonPanel.clearResult(false);
@@ -570,6 +582,7 @@ public final class Main {
         boolean wasVisible = rowComparisonPanel.isVisible();
         if (wasVisible == visible) return;
         if (!visible) {
+            cancelActiveRowComparison();
             rowComparisonRequest++;
             rowComparisonPanel.setExpanded(false);
             rowComparisonPanel.clearResult(false);
@@ -606,11 +619,14 @@ public final class Main {
             rowComparisonPanel.showMessage("La comparación de filas requiere una tabla presente en ambas bases.");
             return;
         }
-        long request = ++rowComparisonRequest;
         if (!(source instanceof DatabaseConnector sourceConnector)) {
             rowComparisonPanel.showMessage("La comparación de filas requiere dos bases conectadas; el snapshot solo contiene definiciones SQL.");
             return;
         }
+        cancelActiveRowComparison();
+        long request = ++rowComparisonRequest;
+        RowComparisonCancellation cancellation = new RowComparisonCancellation();
+        activeRowCancellation = cancellation;
         DatabaseConnector targetConnector = target;
         List<String> customKey = customRowKeys.getOrDefault(selected.key(), List.of());
         rowComparisonPanel.showLoading(selected.key().qualifiedName());
@@ -621,8 +637,10 @@ public final class Main {
         // antiguas si el usuario seleccionó otra tabla antes de terminar.
         worker.submit(() -> {
             try {
-                RowComparisonMetadata metadata = sourceConnector.rowComparisonMetadata(selected.key());
-                RowComparisonMetadata peerMetadata = targetConnector.rowComparisonMetadata(selected.key());
+                cancellation.checkCancelled();
+                RowComparisonMetadata metadata = sourceConnector.rowComparisonMetadata(selected.key(), cancellation);
+                RowComparisonMetadata peerMetadata = targetConnector.rowComparisonMetadata(selected.key(), cancellation);
+                cancellation.checkCancelled();
                 if (metadata.primaryKey().isEmpty() && peerMetadata.primaryKey().isEmpty() && customKey.isEmpty()) {
                     SwingUtilities.invokeLater(() -> {
                         if (request != rowComparisonRequest || !isSelected(selected.key())) return;
@@ -633,10 +651,17 @@ public final class Main {
                 }
                 RowDiff.Result rows = sourceConnector.compareTableRows(targetConnector, selected.key(), Integer.MAX_VALUE, customKey,
                         (rowsRead, totalRows) -> SwingUtilities.invokeLater(() -> {
-                            if (request == rowComparisonRequest && isSelected(selected.key())) showRowProgress(rowsRead, totalRows);
-                        }));
+                            if (request == rowComparisonRequest && isSelected(selected.key()) && !cancellation.isCancelled())
+                                showRowProgress(rowsRead, totalRows);
+                        }), cancellation);
+                cancellation.checkCancelled();
                 SwingUtilities.invokeLater(() -> {
                     if (request != rowComparisonRequest || !isSelected(selected.key())) return;
+                    if (cancellation.isCancelled()) {
+                        rowComparisonPanel.showMessage("Comparación de filas cancelada.");
+                        connectionStatus.setText("Comparación de filas cancelada");
+                        return;
+                    }
                     try {
                         // La consulta pudo terminar bien aunque la vista falle; dar
                         // un mensaje explícito evita dejar el panel en “Comparando”.
@@ -649,6 +674,13 @@ public final class Main {
                     }
                 });
             } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> {
+                if (activeRowCancellation != cancellation) return;
+                if (cancellation.isCancelled()) {
+                    if (request == rowComparisonRequest && isSelected(selected.key()))
+                        rowComparisonPanel.showMessage("Comparación de filas cancelada.");
+                    connectionStatus.setText("Comparación de filas cancelada");
+                    return;
+                }
                 if (request != rowComparisonRequest || !isSelected(selected.key())) return;
                 String message = AppUtils.errorMessage(ex);
                 if (!customKey.isEmpty() && (message.equals(RowComparisonMessages.customKeyNotUnique())
@@ -660,8 +692,29 @@ public final class Main {
                     setBusy(false, "No se compararon las filas");
                     rowComparisonPanel.showErrorMessage("No se pudieron comparar las filas: " + message);
                 }
-            }); }
+            }); } finally {
+                SwingUtilities.invokeLater(() -> {
+                    if (activeRowCancellation != cancellation) return;
+                    activeRowCancellation = null;
+                    setBusy(false, connectionStatus.getText());
+                });
+            }
         });
+    }
+
+    private void cancelRowComparison() {
+        RowComparisonCancellation cancellation = activeRowCancellation;
+        if (cancellation == null) return;
+        cancellation.cancel();
+        setBusy(false, "Cancelando la comparación de filas…");
+    }
+
+    private void cancelActiveRowComparison() {
+        RowComparisonCancellation cancellation = activeRowCancellation;
+        if (cancellation != null) {
+            cancellation.cancel();
+            cancelRowsButton.setEnabled(false);
+        }
     }
 
     private void configureRowComparisonKey(DiffEngine.Result selected) {
@@ -817,6 +870,30 @@ public final class Main {
                 sourceDependencyReport, targetDependencyReport));
     }
 
+    private void exportReport() {
+        if (!compared || schemaComparisonRunning || source == null || target == null) return;
+        List<DiffEngine.Result> results = objectCatalog.allItems().stream()
+                .filter(DiffEngine.Result.class::isInstance).map(DiffEngine.Result.class::cast).toList();
+        if (results.isEmpty()) return;
+        List<String> warnings = new ArrayList<>();
+        warnings.addAll(DependencySummary.notes("Origen", sourceDependencyReport));
+        warnings.addAll(DependencySummary.notes("Destino", targetDependencyReport));
+        ComparisonReportDialogs.save(frame, reportEndpointLabel(true), reportEndpointLabel(false), schemaEngine, results, warnings);
+    }
+
+    private String reportEndpointLabel(boolean origin) {
+        String name = origin ? sourceDatabase : targetDatabase;
+        if (currentSelection == null) return name;
+        Endpoint endpoint = origin ? currentSelection.origin() : currentSelection.destination();
+        ConnectionProfile profile = origin ? currentSelection.originProfile() : currentSelection.destinationProfile();
+        List<String> details = new ArrayList<>();
+        if (profile != null && !profile.environment().isBlank()) details.add(profile.environment());
+        if (endpoint != null) details.add(endpoint.engine() + " · " + endpointAddress(endpoint));
+        if (origin && endpoint == null && currentSelection.sourceFolder() != null)
+            details.add(currentSelection.sourceFolder().toAbsolutePath().normalize().toString());
+        return details.isEmpty() ? name : name + " (" + String.join(" · ", details) + ")";
+    }
+
     private void updateExportButton() {
         if (exportButton == null) return;
         boolean flyway = currentSelection != null && currentSelection.mode() == ConnectionDialog.SourceMode.FLYWAY;
@@ -879,8 +956,13 @@ public final class Main {
 
     private void setBusy(boolean busy, String text) {
         if (busy || !schemaComparisonRunning) connectionStatus.setText(text);
-        boolean active = busy || schemaComparisonRunning;
+        RowComparisonCancellation rowCancellation = activeRowCancellation;
+        boolean active = busy || schemaComparisonRunning || rowCancellation != null;
         activityIndicator.setVisible(active);
+        cancelRowsButton.setVisible(rowCancellation != null);
+        cancelRowsButton.setEnabled(rowCancellation != null && !rowCancellation.isCancelled());
+        if (reportButton != null) reportButton.setEnabled(compared && !schemaComparisonRunning && source != null && target != null
+                && objectCatalog != null && objectCatalog.allItems().stream().anyMatch(DiffEngine.Result.class::isInstance));
         if (!active) {
             activityIndicator.setIndeterminate(true);
             activityIndicator.setStringPainted(false);
@@ -919,7 +1001,7 @@ public final class Main {
         sourceDependencyReport = new DependencyReport(Map.of(), List.of(), List.of());
         targetDependencyReport = new DependencyReport(Map.of(), List.of(), List.of());
     }
-    private void close() { closeConnectors(); worker.shutdownNow(); frame.dispose(); }
+    private void close() { cancelActiveRowComparison(); closeConnectors(); worker.shutdownNow(); frame.dispose(); }
 
     private void updateLayout() {
         if (workspaceSplit == null || leftPanel == null) return;

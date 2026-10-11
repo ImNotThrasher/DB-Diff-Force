@@ -11,18 +11,22 @@ import java.awt.GridLayout;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.ListCellRenderer;
@@ -37,6 +41,7 @@ final class ObjectCatalogPanel extends JPanel {
     private final JTextField search = new PlaceholderTextField("Buscar objetos...");
     private final JLabel count = new JLabel("0 objetos");
     private final List<JLabel> legendMarkers = new ArrayList<>();
+    private final Set<DiffEngine.Status> visibleStatuses = EnumSet.allOf(DiffEngine.Status.class);
     private final JList<Object> list = new JList<>(model) {
         @Override public String getToolTipText(MouseEvent event) {
             int index = locationToIndex(event.getPoint());
@@ -65,11 +70,15 @@ final class ObjectCatalogPanel extends JPanel {
         heading.putClientProperty("FlatLaf.styleClass", "h3");
         JButton kinds = new JButton("Tipos ▾");
         kinds.addActionListener(event -> kindMenuAction.accept(kinds));
-        JPanel kindAction = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        kindAction.setOpaque(false);
-        kindAction.add(kinds);
+        JButton statuses = new JButton("Estados ▾");
+        statuses.setToolTipText("Filtrar objetos por estado de comparación");
+        statuses.addActionListener(event -> showStatusMenu(statuses));
+        JPanel filterActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        filterActions.setOpaque(false);
+        filterActions.add(kinds);
+        filterActions.add(statuses);
         controls.add(heading, BorderLayout.NORTH);
-        controls.add(kindAction, BorderLayout.SOUTH);
+        controls.add(filterActions, BorderLayout.SOUTH);
 
         list.setCellRenderer(new ResultRenderer());
         list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
@@ -207,13 +216,39 @@ final class ObjectCatalogPanel extends JPanel {
 
     private void applyFilter() { refreshItems(selectedValues(), true); }
 
+    private void showStatusMenu(JButton owner) {
+        JPopupMenu menu = new JPopupMenu();
+        for (DiffEngine.Status status : DiffEngine.Status.values()) {
+            JCheckBoxMenuItem item = new JCheckBoxMenuItem(statusName(status), visibleStatuses.contains(status));
+            item.addActionListener(event -> {
+                if (item.isSelected()) visibleStatuses.add(status);
+                else visibleStatuses.remove(status);
+                owner.setText(visibleStatuses.size() == DiffEngine.Status.values().length
+                        ? "Estados ▾" : "Estados (" + visibleStatuses.size() + "/"
+                                + DiffEngine.Status.values().length + ") ▾");
+                applyFilter();
+            });
+            menu.add(item);
+        }
+        menu.show(owner, 0, owner.getHeight());
+    }
+
+    private static String statusName(DiffEngine.Status status) {
+        return switch (status) {
+            case IDENTICAL -> "Igual";
+            case CHANGED -> "Modificado";
+            case SOURCE_ONLY -> "Solo origen";
+            case TARGET_ONLY -> "Solo destino";
+        };
+    }
+
     private void refreshItems(List<Object> selected, boolean notifySelectionChange) {
         allItems.sort(comparator());
         String query = search.getText().trim().toLowerCase(Locale.ROOT);
         updatingItems = true;
         try {
             model.clear();
-            for (Object item : allItems) if (matches(item, query)) model.addElement(item);
+            for (Object item : allItems) if (matchesStatus(item) && matches(item, query)) model.addElement(item);
             for (Object item : selected) {
                 int index = model.indexOf(item);
                 if (index >= 0) list.addSelectionInterval(index, index);
@@ -239,6 +274,16 @@ final class ObjectCatalogPanel extends JPanel {
         SchemaObject.Key key = CatalogDisplay.objectKey(item);
         return query.isEmpty() || (key.qualifiedName() + " " + CatalogDisplay.kindName(key.kind()))
                 .toLowerCase(Locale.ROOT).contains(query);
+    }
+
+    private boolean matchesStatus(Object item) {
+        if (item instanceof DiffEngine.Result result) return visibleStatuses.contains(result.status());
+        CatalogItem catalog = (CatalogItem) item;
+        if (!catalog.sourcePresent()) return visibleStatuses.contains(DiffEngine.Status.SOURCE_ONLY);
+        if (!catalog.targetPresent()) return visibleStatuses.contains(DiffEngine.Status.TARGET_ONLY);
+        // Before definitions are loaded, shared objects may be either identical or modified.
+        return visibleStatuses.contains(DiffEngine.Status.IDENTICAL)
+                || visibleStatuses.contains(DiffEngine.Status.CHANGED);
     }
 
     static final class ResultRenderer extends JPanel implements ListCellRenderer<Object> {

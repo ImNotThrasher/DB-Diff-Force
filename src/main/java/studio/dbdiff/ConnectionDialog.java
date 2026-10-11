@@ -49,6 +49,7 @@ final class ConnectionDialog extends JDialog {
     private final JCheckBox[] tls = {new JCheckBox("Usar TLS y verificar certificado"), new JCheckBox("Usar TLS y verificar certificado")};
     private final JComboBox<DatabaseEngine> engine = new JComboBox<>(DatabaseEngine.values());
     private final JComboBox<SourceMode> sourceMode = new JComboBox<>(SourceMode.values());
+    private final JComboBox<SavedComparisons.Preset> comparisonPresets = new JComboBox<>();
     private final List<JComboBox<String>> databases = List.of(new JComboBox<>(), new JComboBox<>());
     private final List<JComboBox<String>> savedChoices = List.of(new JComboBox<>(), new JComboBox<>());
     private final JButton[] testButtons = new JButton[2];
@@ -58,6 +59,7 @@ final class ConnectionDialog extends JDialog {
     private final boolean[] updatingDatabaseChoice = new boolean[2];
     private final boolean[] testedSuccessfully = new boolean[2];
     private boolean applyingSavedProfile;
+    private boolean changingComparisonPreset;
     private final int[] testGenerations = new int[2];
     private final String[] preferredDatabase = new String[2];
     private boolean autoConnectRequested;
@@ -87,15 +89,31 @@ final class ConnectionDialog extends JDialog {
         engine.setToolTipText("El motor seleccionado se usa para origen y destino.");
         try { for (ConnectionProfile profile : ConnectionProfiles.load()) savedProfiles.put(profile.name(), profile); }
         catch (IOException ex) { JOptionPane.showMessageDialog(owner, "No se pudieron cargar los perfiles guardados: " + ex.getMessage(), "Perfiles no disponibles", JOptionPane.WARNING_MESSAGE); }
+        try { refreshComparisonPresets(null); }
+        catch (IOException ex) { JOptionPane.showMessageDialog(owner, "No se pudieron cargar las comparaciones guardadas: " + ex.getMessage(), "Comparaciones no disponibles", JOptionPane.WARNING_MESSAGE); }
         JPanel header = new JPanel(new BorderLayout(0, 4));
         header.setBorder(new EmptyBorder(12, 16, 8, 16));
+        JPanel presetRow = new JPanel(new BorderLayout(6, 0));
+        presetRow.add(new JLabel("Comparación guardada"), BorderLayout.WEST);
+        comparisonPresets.setPrototypeDisplayValue(new SavedComparisons.Preset("Desarrollo → QA", null));
+        JPanel presetActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        JButton savePreset = new JButton("Guardar"), deletePreset = new JButton("Eliminar");
+        savePreset.setToolTipText("Guardar origen y destino actuales con un nombre");
+        deletePreset.setToolTipText("Eliminar la comparación guardada seleccionada");
+        presetActions.add(savePreset); presetActions.add(deletePreset);
+        presetRow.add(comparisonPresets, BorderLayout.CENTER); presetRow.add(presetActions, BorderLayout.EAST);
         JPanel selectionRow = new JPanel(new GridBagLayout());
         GridBagConstraints hc = new GridBagConstraints(); hc.insets = new Insets(4, 6, 4, 6); hc.anchor = GridBagConstraints.WEST;
         hc.gridx = 0; hc.gridy = 0; selectionRow.add(new JLabel("Tipo de origen"), hc);
         sourceMode.setPrototypeDisplayValue(SourceMode.SNAPSHOT); hc.gridx = 1; selectionRow.add(sourceMode, hc);
         hc.gridx = 2; hc.insets = new Insets(4, 20, 4, 6); selectionRow.add(new JLabel("Motor (ambos lados)"), hc);
         hc.gridx = 3; hc.insets = new Insets(4, 6, 4, 6); selectionRow.add(engine, hc);
-        header.add(selectionRow, BorderLayout.NORTH);
+        JPanel headerRows = new JPanel();
+        headerRows.setOpaque(false);
+        headerRows.setLayout(new BoxLayout(headerRows, BoxLayout.Y_AXIS));
+        headerRows.add(presetRow);
+        headerRows.add(selectionRow);
+        header.add(headerRows, BorderLayout.NORTH);
         JLabel steps = new JLabel("1 · Configurá el origen     2 · Configurá el destino");
         steps.setForeground(UIManager.getColor("Label.disabledForeground"));
         steps.setBorder(new EmptyBorder(0, 6, 0, 0)); header.add(steps, BorderLayout.SOUTH);
@@ -107,6 +125,13 @@ final class ConnectionDialog extends JDialog {
         endpoints.setBorder(new EmptyBorder(4, 16, 10, 16));
         endpoints.add(originCards); endpoints.add(destinationPanel);
         sourceMode.addActionListener(event -> updateSourceMode());
+        comparisonPresets.addActionListener(event -> {
+            if (!changingComparisonPreset && comparisonPresets.getSelectedItem() instanceof SavedComparisons.Preset preset
+                    && preset.comparison() != null)
+                applyComparisonPreset(preset);
+        });
+        savePreset.addActionListener(event -> saveComparisonPreset());
+        deletePreset.addActionListener(event -> deleteComparisonPreset());
 
         connectButton = actionButton("Iniciar comparación");
         JButton cancel = new JButton("Cancelar");
@@ -119,7 +144,10 @@ final class ConnectionDialog extends JDialog {
         getRootPane().registerKeyboardAction(event -> { autoConnectRequested = false; dispose(); },
                 KeyStroke.getKeyStroke("ESCAPE"), JComponent.WHEN_IN_FOCUSED_WINDOW);
         updateSourceMode();
-        if (lastComparison != null) restoreLastComparison(lastComparison);
+        if (lastComparison != null) {
+            restoreLastComparison(lastComparison);
+            selectMatchingPreset(lastComparison);
+        }
         setMinimumSize(new Dimension(850, 480)); pack(); setLocationRelativeTo(owner);
         SwingUtilities.invokeLater(() -> {
             if (!isDisplayable()) return;
@@ -135,6 +163,9 @@ final class ConnectionDialog extends JDialog {
 
     private void restoreLastComparison(LastComparisonPreferences.SavedComparison saved) {
         // Restore non-secret fields first; passwords are recovered only from an exact matching saved profile.
+        restoreCredentialsAvailable = true;
+        restorePasswordsAvailable = true;
+        restoreNotice = null;
         sourceMode.setSelectedItem(saved.mode());
         updateSourceMode();
         applyingSavedProfile = true;
@@ -161,6 +192,118 @@ final class ConnectionDialog extends JDialog {
         if (!restorePasswordsAvailable) {
             String missing = "Se cargaron los datos de la última comparación. Ingresá las contraseñas que no estén guardadas y probá las conexiones.";
             restoreNotice = restoreNotice == null ? missing : restoreNotice + "\n\n" + missing;
+        }
+    }
+
+    private void refreshComparisonPresets(String selectedName) throws IOException {
+        changingComparisonPreset = true;
+        try {
+            comparisonPresets.removeAllItems();
+            comparisonPresets.addItem(new SavedComparisons.Preset("Elegí una comparación guardada", null));
+            for (SavedComparisons.Preset preset : SavedComparisons.load()) comparisonPresets.addItem(preset);
+            if (selectedName != null) {
+                for (int index = 1; index < comparisonPresets.getItemCount(); index++) {
+                    SavedComparisons.Preset preset = comparisonPresets.getItemAt(index);
+                    if (preset.name().equalsIgnoreCase(selectedName)) {
+                        comparisonPresets.setSelectedIndex(index);
+                        break;
+                    }
+                }
+            } else comparisonPresets.setSelectedIndex(0);
+            comparisonPresets.setEnabled(comparisonPresets.getItemCount() > 1);
+        } finally { changingComparisonPreset = false; }
+    }
+
+    private void selectMatchingPreset(LastComparisonPreferences.SavedComparison comparison) {
+        for (int index = 1; index < comparisonPresets.getItemCount(); index++) {
+            SavedComparisons.Preset preset = comparisonPresets.getItemAt(index);
+            if (preset.comparison().equals(comparison)) {
+                changingComparisonPreset = true;
+                comparisonPresets.setSelectedIndex(index);
+                changingComparisonPreset = false;
+                return;
+            }
+        }
+    }
+
+    private void applyComparisonPreset(SavedComparisons.Preset preset) {
+        restoreLastComparison(preset.comparison());
+        revalidate(); pack(); setMinimumSize(new Dimension(850, 480)); setLocationRelativeTo(getOwner());
+        if (restoreNotice != null) JOptionPane.showMessageDialog(this, restoreNotice,
+                "Revisá la comparación guardada", JOptionPane.INFORMATION_MESSAGE);
+        if (!restorePasswordsAvailable) passwords[sourceMode.getSelectedItem() == SourceMode.DATABASE ? 0 : 1].requestFocusInWindow();
+    }
+
+    private void saveComparisonPreset() {
+        try {
+            LastComparisonPreferences.SavedComparison comparison = comparisonFromForm();
+            SavedComparisons.Preset selected = (SavedComparisons.Preset) comparisonPresets.getSelectedItem();
+            String initialName = selected == null || selected.comparison() == null
+                    ? suggestedComparisonName(comparison) : selected.name();
+            JTextField name = new JTextField(initialName, 28);
+            int answer = JOptionPane.showConfirmDialog(this, new Object[]{"Nombre de la comparación", name},
+                    "Guardar comparación", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (answer != JOptionPane.OK_OPTION) return;
+            String normalizedName = name.getText().trim();
+            if (normalizedName.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Ingresá un nombre para la comparación.", "Nombre requerido", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            boolean replacing = SavedComparisons.load().stream().anyMatch(preset -> preset.name().equalsIgnoreCase(normalizedName));
+            if (replacing && JOptionPane.showConfirmDialog(this, "¿Reemplazar la comparación guardada '" + normalizedName + "'?",
+                    "Reemplazar comparación", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+            SavedComparisons.save(normalizedName, comparison);
+            refreshComparisonPresets(normalizedName);
+        } catch (IOException | RuntimeException ex) {
+            JOptionPane.showMessageDialog(this, "No se pudo guardar la comparación: " + ex.getMessage(),
+                    "Error al guardar", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private LastComparisonPreferences.SavedComparison comparisonFromForm() {
+        SourceMode mode = (SourceMode) sourceMode.getSelectedItem();
+        LastComparisonPreferences.SavedEndpoint origin = mode == SourceMode.DATABASE ? savedEndpointFromForm(0) : null;
+        LastComparisonPreferences.SavedEndpoint destination = savedEndpointFromForm(1);
+        if (mode != SourceMode.DATABASE && selectedSourceFolder == null)
+            throw new IllegalArgumentException("Seleccioná la carpeta de origen antes de guardar.");
+        return new LastComparisonPreferences.SavedComparison(mode, origin, destination,
+                mode == SourceMode.DATABASE ? null : selectedSourceFolder);
+    }
+
+    private LastComparisonPreferences.SavedEndpoint savedEndpointFromForm(int side) {
+        Object selectedDatabase = databases.get(side).getSelectedItem();
+        String database = selectedDatabase == null ? preferredDatabase[side] : selectedDatabase.toString();
+        if (database == null || database.isBlank())
+            throw new IllegalArgumentException("Probá la conexión y elegí una base para " + (side == 0 ? "el origen" : "el destino") + ".");
+        return new LastComparisonPreferences.SavedEndpoint((DatabaseEngine) engine.getSelectedItem(),
+                fields[side][0].getText().trim(), Integer.parseInt(fields[side][1].getText().trim()), database,
+                fields[side][2].getText().trim(), tls[side].isSelected());
+    }
+
+    private static String suggestedComparisonName(LastComparisonPreferences.SavedComparison comparison) {
+        String origin;
+        if (comparison.mode() == SourceMode.DATABASE) origin = comparison.origin().database();
+        else {
+            java.nio.file.Path folder = comparison.sourceFolder();
+            String folderName = folder.getFileName() == null ? folder.toString() : folder.getFileName().toString();
+            origin = (comparison.mode() == SourceMode.FLYWAY ? "Flyway: " : "Snapshot: ") + folderName;
+        }
+        return origin + " → " + comparison.destination().database();
+    }
+
+    private void deleteComparisonPreset() {
+        SavedComparisons.Preset selected = (SavedComparisons.Preset) comparisonPresets.getSelectedItem();
+        if (selected == null || selected.comparison() == null) {
+            JOptionPane.showMessageDialog(this, "Elegí una comparación guardada para eliminar.",
+                    "No hay una comparación seleccionada", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        if (JOptionPane.showConfirmDialog(this, "¿Eliminar la comparación guardada '" + selected.name() + "'?",
+                "Eliminar comparación", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+        try { SavedComparisons.remove(selected.name()); refreshComparisonPresets(null); }
+        catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "No se pudo eliminar la comparación: " + ex.getMessage(),
+                    "Error al eliminar", JOptionPane.ERROR_MESSAGE);
         }
     }
 

@@ -16,15 +16,27 @@ final class RowComparisonMerger {
                                   int maxChanges, long totalRows, RowCursor source, RowCursor target,
                                   KeyComparator keyComparator, RowEquality rowEquality,
                                   BiConsumer<Long, Long> progress, String warning) throws SQLException {
+        return compare(targetDatabase, table, columns, primaryKey, maxChanges, totalRows, source, target,
+                keyComparator, rowEquality, progress, warning, null);
+    }
+
+    static RowDiff.Result compare(String targetDatabase, SchemaObject.Key table,
+                                  List<RowDiff.Column> columns, List<RowDiff.Column> primaryKey,
+                                  int maxChanges, long totalRows, RowCursor source, RowCursor target,
+                                  KeyComparator keyComparator, RowEquality rowEquality,
+                                  BiConsumer<Long, Long> progress, String warning,
+                                  RowComparisonCancellation cancellation) throws SQLException {
         List<RowDiff.RowChange> changes = new ArrayList<>();
         long sourceOnly = 0, targetOnly = 0, different = 0, matchedRows = 0;
         long rowsRead = 0, lastReported = 0;
         Map<String, Object> sourceRow = source.next();
         Map<String, Object> targetRow = target.next();
+        checkCancelled(cancellation);
         if (sourceRow != null) rowsRead++;
         if (targetRow != null) rowsRead++;
 
         while (sourceRow != null || targetRow != null) {
+            checkCancelled(cancellation);
             int comparison = sourceRow == null ? 1 : targetRow == null ? -1 : keyComparator.compare(sourceRow, targetRow);
             if (comparison < 0) {
                 sourceOnly++;
@@ -55,6 +67,7 @@ final class RowComparisonMerger {
                 lastReported = rowsRead;
             }
         }
+        checkCancelled(cancellation);
         progress.accept(rowsRead, totalRows);
 
         // Preserve the existing result contract: identical rows count toward the retained sample.
@@ -70,6 +83,10 @@ final class RowComparisonMerger {
 
     private static void retain(List<RowDiff.RowChange> changes, int limit, RowDiff.RowChange change) {
         if (changes.size() < limit) changes.add(change);
+    }
+
+    private static void checkCancelled(RowComparisonCancellation cancellation) throws SQLException {
+        if (cancellation != null) cancellation.checkCancelled();
     }
 
     private static Map<String, Object> keyOf(Map<String, Object> row, List<RowDiff.Column> keys) {

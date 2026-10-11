@@ -214,22 +214,34 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     }
 
     @Override public RowComparisonMetadata rowComparisonMetadata(SchemaObject.Key key) throws SQLException {
+        return rowComparisonMetadata(key, null);
+    }
+
+    @Override public RowComparisonMetadata rowComparisonMetadata(SchemaObject.Key key,
+                                                                  RowComparisonCancellation cancellation) throws SQLException {
         requireConnection();
         if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException(RowComparisonMessages.tablesOnly());
-        return new RowComparisonMetadata(readColumns(key.name()), readPrimaryKey(key.name()));
+        return new RowComparisonMetadata(readColumns(key.name(), cancellation), readPrimaryKey(key.name(), cancellation));
     }
 
     @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
                                                        List<String> customKeyNames, BiConsumer<Long, Long> progress) throws SQLException {
+        return compareTableRows(peerConnector, key, maxChanges, customKeyNames, progress, null);
+    }
+
+    @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
+                                                       List<String> customKeyNames, BiConsumer<Long, Long> progress,
+                                                       RowComparisonCancellation cancellation) throws SQLException {
+        checkCancellation(cancellation);
         requireConnection();
         if (!(peerConnector instanceof MySqlFamilyConnector peer) || peer.engine != engine) throw new SQLException(RowComparisonMessages.matchingEnginesRequired());
         peer.requireConnection();
         if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException(RowComparisonMessages.tablesOnly());
         if (maxChanges < 1) throw new IllegalArgumentException("maxChanges must be positive");
-        List<RowDiff.Column> columns = readColumns(key.name());
-        List<RowDiff.Column> primaryKey = readPrimaryKey(key.name());
-        List<RowDiff.Column> peerColumns = peer.readColumns(key.name());
-        List<RowDiff.Column> peerPrimaryKey = peer.readPrimaryKey(key.name());
+        List<RowDiff.Column> columns = readColumns(key.name(), cancellation);
+        List<RowDiff.Column> primaryKey = readPrimaryKey(key.name(), cancellation);
+        List<RowDiff.Column> peerColumns = peer.readColumns(key.name(), cancellation);
+        List<RowDiff.Column> peerPrimaryKey = peer.readPrimaryKey(key.name(), cancellation);
         if (columns.isEmpty()) throw new SQLException(RowComparisonMessages.noVisibleColumns());
         if (!columns.equals(peerColumns) || !primaryKey.equals(peerPrimaryKey)) throw new SQLException(RowComparisonMessages.columnsOrPrimaryKeyDiffer());
         List<RowDiff.Column> comparisonKey = primaryKey;
@@ -241,12 +253,13 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         for (RowDiff.Column column : comparisonKey) if (!safeKey(column.type()))
             throw new SQLException(RowComparisonMessages.unsupportedPrimaryKeyType(column.name(), column.type()));
         if (customKey) {
-            validateCustomKey(key.name(), comparisonKey);
-            peer.validateCustomKey(key.name(), comparisonKey);
+            validateCustomKey(key.name(), comparisonKey, cancellation);
+            peer.validateCustomKey(key.name(), comparisonKey, cancellation);
         }
 
         progress.accept(0L, -1L);
-        long totalRows = countRows(key.name()) + peer.countRows(key.name());
+        long totalRows = countRows(key.name(), cancellation) + peer.countRows(key.name(), cancellation);
+        checkCancellation(cancellation);
         progress.accept(0L, totalRows);
 
         String columnsSql = columns.stream().map(c -> quote(c.name())).collect(java.util.stream.Collectors.joining(", "));
@@ -255,16 +268,25 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         String peerQuery = "SELECT " + columnsSql + " FROM " + quote(peer.database) + "." + quote(key.name()) + " ORDER BY " + order;
         try (PreparedStatement left = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
              PreparedStatement right = peer.connection.prepareStatement(peerQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
-            left.setFetchSize(500); right.setFetchSize(500);
-            try (ResultSet a = left.executeQuery(); ResultSet b = right.executeQuery()) {
-                // Each connector keeps its dialect-specific ordering and comparison rules;
-                // this shared merge only walks the already sorted cursors and retains results.
-                return RowComparisonMerger.compare(peer.database, key, columns, rowKey, maxChanges, totalRows,
-                        () -> a.next() ? readRow(a, columns) : null,
-                        () -> b.next() ? readRow(b, columns) : null,
-                        (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, rowKey),
-                        (sourceRow, targetRow) -> rowsEqual(sourceRow, targetRow, columns),
-                        progress, customKey ? "Clave personalizada verificada sin valores NULL ni duplicados en ambos extremos." : "");
+            boolean leftRegistered = false, rightRegistered = false;
+            try {
+                if (cancellation != null) { cancellation.register(left); leftRegistered = true; cancellation.register(right); rightRegistered = true; }
+                left.setFetchSize(500); right.setFetchSize(500);
+                try (ResultSet a = left.executeQuery(); ResultSet b = right.executeQuery()) {
+                    // Each connector keeps its dialect-specific ordering and comparison rules;
+                    // this shared merge only walks the already sorted cursors and retains results.
+                    return RowComparisonMerger.compare(peer.database, key, columns, rowKey, maxChanges, totalRows,
+                            () -> a.next() ? readRow(a, columns) : null,
+                            () -> b.next() ? readRow(b, columns) : null,
+                            (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, rowKey),
+                            (sourceRow, targetRow) -> rowsEqual(sourceRow, targetRow, columns),
+                            progress, customKey ? "Clave personalizada verificada sin valores NULL ni duplicados en ambos extremos." : "", cancellation);
+                }
+            } finally {
+                if (cancellation != null) {
+                    if (leftRegistered) cancellation.unregister(left);
+                    if (rightRegistered) cancellation.unregister(right);
+                }
             }
         }
     }
@@ -280,48 +302,83 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
         return List.copyOf(selected);
     }
 
-    private void validateCustomKey(String table, List<RowDiff.Column> key) throws SQLException {
+    private void validateCustomKey(String table, List<RowDiff.Column> key, RowComparisonCancellation cancellation) throws SQLException {
         String columns = key.stream().map(column -> quote(column.name())).collect(java.util.stream.Collectors.joining(", "));
         String nullPredicate = key.stream().map(column -> quote(column.name()) + " IS NULL").collect(java.util.stream.Collectors.joining(" OR "));
         String qualified = quote(database) + "." + quote(table);
-        try (Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery("SELECT 1 FROM " + qualified + " WHERE " + nullPredicate + " LIMIT 1")) {
-            if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyContainsNull());
+        checkCancellation(cancellation);
+        try (Statement statement = connection.createStatement()) {
+            register(cancellation, statement);
+            try (ResultSet rows = statement.executeQuery("SELECT 1 FROM " + qualified + " WHERE " + nullPredicate + " LIMIT 1")) {
+                if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyContainsNull());
+            } finally { unregister(cancellation, statement); }
         }
-        try (Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery("SELECT 1 FROM " + qualified + " GROUP BY " + columns + " HAVING COUNT(*) > 1 LIMIT 1")) {
-            if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyNotUnique());
+        checkCancellation(cancellation);
+        try (Statement statement = connection.createStatement()) {
+            register(cancellation, statement);
+            try (ResultSet rows = statement.executeQuery("SELECT 1 FROM " + qualified + " GROUP BY " + columns + " HAVING COUNT(*) > 1 LIMIT 1")) {
+                if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyNotUnique());
+            } finally { unregister(cancellation, statement); }
         }
     }
 
-    private long countRows(String table) throws SQLException {
+    private long countRows(String table, RowComparisonCancellation cancellation) throws SQLException {
         String sql = "SELECT COUNT(*) FROM " + quote(database) + "." + quote(table);
-        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
-            if (!rows.next()) throw new SQLException(RowComparisonMessages.rowCountUnavailable(table));
-            return rows.getLong(1);
+        try (Statement statement = connection.createStatement()) {
+            register(cancellation, statement);
+            try (ResultSet rows = statement.executeQuery(sql)) {
+                if (!rows.next()) throw new SQLException(RowComparisonMessages.rowCountUnavailable(table));
+                return rows.getLong(1);
+            } finally { unregister(cancellation, statement); }
         }
+    }
+
+    private static void register(RowComparisonCancellation cancellation, Statement statement) throws SQLException {
+        if (cancellation != null) cancellation.register(statement);
+    }
+
+    private static void unregister(RowComparisonCancellation cancellation, Statement statement) {
+        if (cancellation != null) cancellation.unregister(statement);
+    }
+
+    private static void checkCancellation(RowComparisonCancellation cancellation) throws SQLException {
+        if (cancellation != null) cancellation.checkCancelled();
     }
 
     private List<RowDiff.Column> readColumns(String table) throws SQLException {
+        return readColumns(table, null);
+    }
+
+    private List<RowDiff.Column> readColumns(String table, RowComparisonCancellation cancellation) throws SQLException {
         List<RowDiff.Column> columns = new ArrayList<>();
         String sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, CHARACTER_SET_NAME, COLLATION_NAME, DATETIME_PRECISION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
-            ps.setString(1, database); ps.setString(2, table);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) columns.add(new RowDiff.Column(rs.getString("COLUMN_NAME"), rs.getString("DATA_TYPE").toLowerCase(Locale.ROOT), columnSignature(rs), "YES".equals(rs.getString("IS_NULLABLE"))));
-            }
+            register(cancellation, ps);
+            try {
+                ps.setString(1, database); ps.setString(2, table);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) columns.add(new RowDiff.Column(rs.getString("COLUMN_NAME"), rs.getString("DATA_TYPE").toLowerCase(Locale.ROOT), columnSignature(rs), "YES".equals(rs.getString("IS_NULLABLE"))));
+                }
+            } finally { unregister(cancellation, ps); }
         }
         return columns;
     }
 
     private List<RowDiff.Column> readPrimaryKey(String table) throws SQLException {
+        return readPrimaryKey(table, null);
+    }
+
+    private List<RowDiff.Column> readPrimaryKey(String table, RowComparisonCancellation cancellation) throws SQLException {
         Map<Integer, RowDiff.Column> ordered = new TreeMap<>();
         String sql = "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.COLUMN_TYPE, c.IS_NULLABLE, c.CHARACTER_SET_NAME, c.COLLATION_NAME, c.DATETIME_PRECISION, s.SEQ_IN_INDEX FROM information_schema.STATISTICS s JOIN information_schema.COLUMNS c ON c.TABLE_SCHEMA=s.TABLE_SCHEMA AND c.TABLE_NAME=s.TABLE_NAME AND c.COLUMN_NAME=s.COLUMN_NAME WHERE s.TABLE_SCHEMA=? AND s.TABLE_NAME=? AND s.INDEX_NAME='PRIMARY' ORDER BY s.SEQ_IN_INDEX";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
-            ps.setString(1, database); ps.setString(2, table);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) ordered.put(rs.getInt("SEQ_IN_INDEX"), new RowDiff.Column(rs.getString("COLUMN_NAME"), rs.getString("DATA_TYPE").toLowerCase(Locale.ROOT), columnSignature(rs), "YES".equals(rs.getString("IS_NULLABLE"))));
-            }
+            register(cancellation, ps);
+            try {
+                ps.setString(1, database); ps.setString(2, table);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) ordered.put(rs.getInt("SEQ_IN_INDEX"), new RowDiff.Column(rs.getString("COLUMN_NAME"), rs.getString("DATA_TYPE").toLowerCase(Locale.ROOT), columnSignature(rs), "YES".equals(rs.getString("IS_NULLABLE"))));
+                }
+            } finally { unregister(cancellation, ps); }
         }
         return List.copyOf(ordered.values());
     }

@@ -8,10 +8,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
+import java.sql.SQLException;
+import java.sql.SQLException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class RowComparisonMergerTest {
     private static final SchemaObject.Key TABLE = new SchemaObject.Key(SchemaObject.Kind.TABLE, "", "items");
@@ -49,6 +53,14 @@ class RowComparisonMergerTest {
         compare(List.of(row(1, "a"), row(3, "c")), List.of(row(2, "b")), 10, progress);
 
         assertEquals("3/3", reports.get(reports.size() - 1));
+    }
+
+    @Test void stopsMergingWhenCancellationIsRequested() {
+        RowComparisonCancellation cancellation = new RowComparisonCancellation();
+        assertThrows(SQLException.class, () -> RowComparisonMerger.compare("target", TABLE, COLUMNS, PRIMARY_KEY,
+                10, 2, () -> { cancellation.cancel(); return row(1, "a"); }, cursor(List.of(row(1, "a"))),
+                (left, right) -> Integer.compare((Integer) left.get("id"), (Integer) right.get("id")),
+                Map::equals, (read, total) -> { }, "", cancellation));
     }
 
     private static RowDiff.Result compare(List<Map<String, Object>> source, List<Map<String, Object>> target,

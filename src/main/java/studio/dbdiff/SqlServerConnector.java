@@ -412,20 +412,32 @@ public final class SqlServerConnector implements DatabaseConnector {
     }
 
     @Override public RowComparisonMetadata rowComparisonMetadata(SchemaObject.Key key) throws SQLException {
+        return rowComparisonMetadata(key, null);
+    }
+
+    @Override public RowComparisonMetadata rowComparisonMetadata(SchemaObject.Key key,
+                                                                  RowComparisonCancellation cancellation) throws SQLException {
         requireConnection();
         if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException(RowComparisonMessages.tablesOnly());
-        return new RowComparisonMetadata(readColumns(key), readPrimaryKey(key));
+        return new RowComparisonMetadata(readColumns(key, cancellation), readPrimaryKey(key, cancellation));
     }
 
     @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
                                                        List<String> customKeyNames, BiConsumer<Long, Long> progress) throws SQLException {
+        return compareTableRows(peerConnector, key, maxChanges, customKeyNames, progress, null);
+    }
+
+    @Override public RowDiff.Result compareTableRows(DatabaseConnector peerConnector, SchemaObject.Key key, int maxChanges,
+                                                       List<String> customKeyNames, BiConsumer<Long, Long> progress,
+                                                       RowComparisonCancellation cancellation) throws SQLException {
+        checkCancellation(cancellation);
         requireConnection();
         if (!(peerConnector instanceof SqlServerConnector peer)) throw new SQLException(RowComparisonMessages.sqlServerConnectionsRequired());
         peer.requireConnection();
         if (key.kind() != SchemaObject.Kind.TABLE) throw new SQLException(RowComparisonMessages.tablesOnly());
         if (maxChanges < 1) throw new IllegalArgumentException("maxChanges must be positive");
-        List<RowDiff.Column> columns = readColumns(key), peerColumns = peer.readColumns(key);
-        List<RowDiff.Column> primaryKey = readPrimaryKey(key), peerPrimaryKey = peer.readPrimaryKey(key);
+        List<RowDiff.Column> columns = readColumns(key, cancellation), peerColumns = peer.readColumns(key, cancellation);
+        List<RowDiff.Column> primaryKey = readPrimaryKey(key, cancellation), peerPrimaryKey = peer.readPrimaryKey(key, cancellation);
         if (columns.isEmpty()) throw new SQLException(RowComparisonMessages.noVisibleColumns());
         if (!compatibleColumns(columns, peerColumns)) throw new SQLException(RowComparisonMessages.incompatibleColumns());
         if (!compatiblePrimaryKeys(primaryKey, peerPrimaryKey)) throw new SQLException(RowComparisonMessages.incompatiblePrimaryKey());
@@ -438,12 +450,13 @@ public final class SqlServerConnector implements DatabaseConnector {
         for (RowDiff.Column column : comparisonKey) if (!safeKey(column.type()))
             throw new SQLException(RowComparisonMessages.unsupportedPrimaryKeyType(column.name(), column.type()));
         if (customKey) {
-            validateCustomKey(key, comparisonKey);
-            peer.validateCustomKey(key, comparisonKey);
+            validateCustomKey(key, comparisonKey, cancellation);
+            peer.validateCustomKey(key, comparisonKey, cancellation);
         }
 
         progress.accept(0L, -1L);
-        long totalRows = countRows(key) + peer.countRows(key);
+        long totalRows = countRows(key, cancellation) + peer.countRows(key, cancellation);
+        checkCancellation(cancellation);
         progress.accept(0L, totalRows);
 
         String selectedColumns = columns.stream().map(column -> quote(column.name())).collect(java.util.stream.Collectors.joining(", "));
@@ -457,17 +470,26 @@ public final class SqlServerConnector implements DatabaseConnector {
             warnings.add("La metadata de columnas difiere entre los extremos; revisá los tipos y largos del destino antes de exportar cambios de filas.");
         try (PreparedStatement left = connection.prepareStatement(sourceQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
              PreparedStatement right = peer.connection.prepareStatement(targetQuery, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
-            left.setFetchSize(500); right.setFetchSize(500);
-            try (ResultSet sourceRows = left.executeQuery(); ResultSet targetRows = right.executeQuery()) {
-                // SQL Server supplies its own binary key ordering and value comparison;
-                // the common merger streams both sorted cursors without retaining full tables.
-                return RowComparisonMerger.compare(peer.database, key, columns, rowKey, maxChanges, totalRows,
-                        () -> sourceRows.next() ? readRow(sourceRows, columns) : null,
-                        () -> targetRows.next() ? readRow(targetRows, columns) : null,
-                        (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, rowKey),
-                        (sourceRow, targetRow) -> rowsEqual(sourceRow, targetRow, columns),
-                        progress, String.join(" ", warnings) + (customKey
-                                ? " Clave personalizada verificada sin valores NULL ni duplicados en ambos extremos." : "").trim());
+            boolean leftRegistered = false, rightRegistered = false;
+            try {
+                if (cancellation != null) { cancellation.register(left); leftRegistered = true; cancellation.register(right); rightRegistered = true; }
+                left.setFetchSize(500); right.setFetchSize(500);
+                try (ResultSet sourceRows = left.executeQuery(); ResultSet targetRows = right.executeQuery()) {
+                    // SQL Server supplies its own binary key ordering and value comparison;
+                    // the common merger streams both sorted cursors without retaining full tables.
+                    return RowComparisonMerger.compare(peer.database, key, columns, rowKey, maxChanges, totalRows,
+                            () -> sourceRows.next() ? readRow(sourceRows, columns) : null,
+                            () -> targetRows.next() ? readRow(targetRows, columns) : null,
+                            (sourceRow, targetRow) -> compareKeys(sourceRow, targetRow, rowKey),
+                            (sourceRow, targetRow) -> rowsEqual(sourceRow, targetRow, columns),
+                            progress, String.join(" ", warnings) + (customKey
+                                    ? " Clave personalizada verificada sin valores NULL ni duplicados en ambos extremos." : "").trim(), cancellation);
+                }
+            } finally {
+                if (cancellation != null) {
+                    if (leftRegistered) cancellation.unregister(left);
+                    if (rightRegistered) cancellation.unregister(right);
+                }
             }
         }
     }
@@ -483,17 +505,24 @@ public final class SqlServerConnector implements DatabaseConnector {
         return List.copyOf(selected);
     }
 
-    private void validateCustomKey(SchemaObject.Key table, List<RowDiff.Column> key) throws SQLException {
+    private void validateCustomKey(SchemaObject.Key table, List<RowDiff.Column> key,
+                                   RowComparisonCancellation cancellation) throws SQLException {
         String columns = key.stream().map(column -> quote(column.name())).collect(java.util.stream.Collectors.joining(", "));
         String nullPredicate = key.stream().map(column -> quote(column.name()) + " IS NULL").collect(java.util.stream.Collectors.joining(" OR "));
         String qualified = qualified(database, table);
-        try (Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery("SELECT TOP (1) 1 FROM " + qualified + " WHERE " + nullPredicate)) {
-            if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyContainsNull());
+        checkCancellation(cancellation);
+        try (Statement statement = connection.createStatement()) {
+            register(cancellation, statement);
+            try (ResultSet rows = statement.executeQuery("SELECT TOP (1) 1 FROM " + qualified + " WHERE " + nullPredicate)) {
+                if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyContainsNull());
+            } finally { unregister(cancellation, statement); }
         }
-        try (Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery("SELECT TOP (1) 1 FROM " + qualified + " GROUP BY " + columns + " HAVING COUNT_BIG(*) > 1")) {
-            if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyNotUnique());
+        checkCancellation(cancellation);
+        try (Statement statement = connection.createStatement()) {
+            register(cancellation, statement);
+            try (ResultSet rows = statement.executeQuery("SELECT TOP (1) 1 FROM " + qualified + " GROUP BY " + columns + " HAVING COUNT_BIG(*) > 1")) {
+                if (rows.next()) throw new SQLException(RowComparisonMessages.customKeyNotUnique());
+            } finally { unregister(cancellation, statement); }
         }
     }
 
@@ -520,35 +549,61 @@ public final class SqlServerConnector implements DatabaseConnector {
         return isText(left) && isText(right) || isNumeric(left) && isNumeric(right);
     }
 
-    private long countRows(SchemaObject.Key key) throws SQLException {
+    private long countRows(SchemaObject.Key key, RowComparisonCancellation cancellation) throws SQLException {
         String sql = "SELECT COUNT_BIG(*) FROM " + qualified(database, key);
-        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
-            if (!rows.next()) throw new SQLException(RowComparisonMessages.rowCountUnavailable(key.qualifiedName()));
-            return rows.getLong(1);
+        try (Statement statement = connection.createStatement()) {
+            register(cancellation, statement);
+            try (ResultSet rows = statement.executeQuery(sql)) {
+                if (!rows.next()) throw new SQLException(RowComparisonMessages.rowCountUnavailable(key.qualifiedName()));
+                return rows.getLong(1);
+            } finally { unregister(cancellation, statement); }
         }
     }
 
+    private static void register(RowComparisonCancellation cancellation, Statement statement) throws SQLException {
+        if (cancellation != null) cancellation.register(statement);
+    }
+
+    private static void unregister(RowComparisonCancellation cancellation, Statement statement) {
+        if (cancellation != null) cancellation.unregister(statement);
+    }
+
+    private static void checkCancellation(RowComparisonCancellation cancellation) throws SQLException {
+        if (cancellation != null) cancellation.checkCancelled();
+    }
+
     private List<RowDiff.Column> readColumns(SchemaObject.Key key) throws SQLException {
+        return readColumns(key, null);
+    }
+
+    private List<RowDiff.Column> readColumns(SchemaObject.Key key, RowComparisonCancellation cancellation) throws SQLException {
         List<RowDiff.Column> result = new ArrayList<>();
         String sql = "SELECT c.name,t.name,c.max_length,c.precision,c.scale,c.is_nullable,t.is_user_defined,SCHEMA_NAME(t.schema_id),c.collation_name,c.is_identity,c.is_computed "
                 + "FROM sys.tables tb JOIN sys.schemas s ON s.schema_id=tb.schema_id JOIN sys.columns c ON c.object_id=tb.object_id "
                 + "JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE s.name=? AND tb.name=? ORDER BY c.column_id";
         try (PreparedStatement query = connection.prepareStatement(sql)) {
-            query.setString(1, key.schema()); query.setString(2, key.name());
-            try (ResultSet rows = query.executeQuery()) {
-                while (rows.next()) {
-                    String type = rows.getString(2).toLowerCase(Locale.ROOT);
-                    String signature = type + "|length=" + rows.getInt(3) + "|precision=" + rows.getInt(4) + "|scale=" + rows.getInt(5)
-                            + "|userType=" + rows.getBoolean(7) + "|typeSchema=" + rows.getString(8) + "|collation=" + rows.getString(9)
-                            + "|identity=" + rows.getBoolean(10) + "|computed=" + rows.getBoolean(11);
-                    result.add(new RowDiff.Column(rows.getString(1), type, signature, rows.getBoolean(6)));
+            register(cancellation, query);
+            try {
+                query.setString(1, key.schema()); query.setString(2, key.name());
+                try (ResultSet rows = query.executeQuery()) {
+                    while (rows.next()) {
+                        String type = rows.getString(2).toLowerCase(Locale.ROOT);
+                        String signature = type + "|length=" + rows.getInt(3) + "|precision=" + rows.getInt(4) + "|scale=" + rows.getInt(5)
+                                + "|userType=" + rows.getBoolean(7) + "|typeSchema=" + rows.getString(8) + "|collation=" + rows.getString(9)
+                                + "|identity=" + rows.getBoolean(10) + "|computed=" + rows.getBoolean(11);
+                        result.add(new RowDiff.Column(rows.getString(1), type, signature, rows.getBoolean(6)));
+                    }
                 }
-            }
+            } finally { unregister(cancellation, query); }
         }
         return List.copyOf(result);
     }
 
     private List<RowDiff.Column> readPrimaryKey(SchemaObject.Key key) throws SQLException {
+        return readPrimaryKey(key, null);
+    }
+
+    private List<RowDiff.Column> readPrimaryKey(SchemaObject.Key key, RowComparisonCancellation cancellation) throws SQLException {
         List<RowDiff.Column> result = new ArrayList<>();
         String sql = "SELECT c.name,t.name,c.max_length,c.precision,c.scale,c.is_nullable,t.is_user_defined,SCHEMA_NAME(t.schema_id),c.collation_name,c.is_identity,c.is_computed "
                 + "FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal>0 "
@@ -556,16 +611,19 @@ public final class SqlServerConnector implements DatabaseConnector {
                 + "JOIN sys.tables tb ON tb.object_id=i.object_id JOIN sys.schemas s ON s.schema_id=tb.schema_id "
                 + "WHERE i.is_primary_key=1 AND s.name=? AND tb.name=? ORDER BY ic.key_ordinal";
         try (PreparedStatement query = connection.prepareStatement(sql)) {
-            query.setString(1, key.schema()); query.setString(2, key.name());
-            try (ResultSet rows = query.executeQuery()) {
-                while (rows.next()) {
-                    String type = rows.getString(2).toLowerCase(Locale.ROOT);
-                    String signature = type + "|length=" + rows.getInt(3) + "|precision=" + rows.getInt(4) + "|scale=" + rows.getInt(5)
-                            + "|userType=" + rows.getBoolean(7) + "|typeSchema=" + rows.getString(8) + "|collation=" + rows.getString(9)
-                            + "|identity=" + rows.getBoolean(10) + "|computed=" + rows.getBoolean(11);
-                    result.add(new RowDiff.Column(rows.getString(1), type, signature, rows.getBoolean(6)));
+            register(cancellation, query);
+            try {
+                query.setString(1, key.schema()); query.setString(2, key.name());
+                try (ResultSet rows = query.executeQuery()) {
+                    while (rows.next()) {
+                        String type = rows.getString(2).toLowerCase(Locale.ROOT);
+                        String signature = type + "|length=" + rows.getInt(3) + "|precision=" + rows.getInt(4) + "|scale=" + rows.getInt(5)
+                                + "|userType=" + rows.getBoolean(7) + "|typeSchema=" + rows.getString(8) + "|collation=" + rows.getString(9)
+                                + "|identity=" + rows.getBoolean(10) + "|computed=" + rows.getBoolean(11);
+                        result.add(new RowDiff.Column(rows.getString(1), type, signature, rows.getBoolean(6)));
+                    }
                 }
-            }
+            } finally { unregister(cancellation, query); }
         }
         return List.copyOf(result);
     }
