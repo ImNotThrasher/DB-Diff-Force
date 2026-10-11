@@ -43,10 +43,11 @@ jobs:
           cp "target/db-diff-force-${GITHUB_REF_NAME#v}.jar" "$distribution/"
           cp -R target/lib "$distribution/"
           cp LICENSE README.md "$distribution/"
-          cat > "$distribution/run.bat" <<'EOF'
+          jar_file="db-diff-force-${GITHUB_REF_NAME#v}.jar"
+          cat > "$distribution/run.bat" <<EOF
           @echo off
           setlocal
-          set "APP_JAR=%~dp0db-diff-force-${GITHUB_REF_NAME#v}.jar"
+          set "APP_JAR=%~dp0${jar_file}"
           if not exist "%APP_JAR%" (
             echo Could not find the application JAR: "%APP_JAR%"
             pause
