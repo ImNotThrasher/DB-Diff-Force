@@ -1,11 +1,21 @@
 package studio.dbdiff;
 
+import java.awt.Color;
+
 /** A reusable endpoint configuration. Passwords live in the OS credential store. */
 public record ConnectionProfile(String name, DatabaseEngine engine, String host, int port,
-                                String database, String user, boolean useTls, boolean rememberPassword) {
+                                String database, String user, boolean useTls, boolean rememberPassword,
+                                String environment, String colorHex) {
+    public static final String DEFAULT_COLOR = "#808080";
+
     public ConnectionProfile(String name, DatabaseEngine engine, String host, int port,
                              String database, String user, boolean useTls) {
-        this(name, engine, host, port, database, user, useTls, false);
+        this(name, engine, host, port, database, user, useTls, false, "", DEFAULT_COLOR);
+    }
+
+    public ConnectionProfile(String name, DatabaseEngine engine, String host, int port,
+                             String database, String user, boolean useTls, boolean rememberPassword) {
+        this(name, engine, host, port, database, user, useTls, rememberPassword, "", DEFAULT_COLOR);
     }
 
     public ConnectionProfile {
@@ -15,5 +25,12 @@ public record ConnectionProfile(String name, DatabaseEngine engine, String host,
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (database == null || database.isBlank()) throw new IllegalArgumentException("Database is required");
         if (user == null || user.isBlank()) throw new IllegalArgumentException("User is required");
+        environment = environment == null ? "" : environment.trim();
+        colorHex = colorHex == null || colorHex.isBlank() ? DEFAULT_COLOR : colorHex.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!colorHex.matches("#[0-9A-F]{6}")) throw new IllegalArgumentException("Profile color must be #RRGGBB");
     }
+
+    public Color markerColor() { return Color.decode(colorHex); }
+
+    public boolean hasMarker() { return !environment.isBlank() || !DEFAULT_COLOR.equals(colorHex); }
 }

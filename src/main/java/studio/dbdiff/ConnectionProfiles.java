@@ -31,7 +31,9 @@ public final class ConnectionProfiles {
                         properties.getProperty(base + ".database"),
                         properties.getProperty(base + ".user"),
                         Boolean.parseBoolean(properties.getProperty(base + ".tls")),
-                        Boolean.parseBoolean(properties.getProperty(base + ".rememberPassword"))));
+                        Boolean.parseBoolean(properties.getProperty(base + ".rememberPassword")),
+                        properties.getProperty(base + ".environment", ""),
+                        properties.getProperty(base + ".color", ConnectionProfile.DEFAULT_COLOR)));
             } catch (RuntimeException ignored) {
                 // Skip malformed entries and keep the remaining saved profiles usable.
             }
@@ -72,6 +74,8 @@ public final class ConnectionProfiles {
             properties.setProperty(key + ".user", profile.user());
             properties.setProperty(key + ".tls", Boolean.toString(profile.useTls()));
             properties.setProperty(key + ".rememberPassword", Boolean.toString(profile.rememberPassword()));
+            properties.setProperty(key + ".environment", profile.environment());
+            properties.setProperty(key + ".color", profile.colorHex());
         }
         Path file = file(); Files.createDirectories(file.getParent());
         try (OutputStream output = Files.newOutputStream(file)) { properties.store(output, AppInfo.NAME + " connection profiles. Passwords are stored in the OS credential store when enabled."); }

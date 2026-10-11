@@ -251,7 +251,8 @@ public final class Main {
                     String sourcePath = selection.sourceFolder() == null ? null
                             : selection.sourceFolder().toAbsolutePath().normalize().toString();
                     comparisonView.setDatabases(sourceDatabase, targetDatabase, sourceServer,
-                            endpointAddress(selection.destination()), sourcePath);
+                            endpointAddress(selection.destination()), sourcePath,
+                            selection.originProfile(), selection.destinationProfile());
                     loadedSourceKeys.clear(); loadedTargetKeys.clear(); selectedSchemaResult = null;
                     compared = false; comparedKeys.clear(); rowComparisonPanel.setExpanded(false); rowComparisonPanel.clearResult(false);
                     showCatalog(); setConnectionAvailable(true); refreshDependencyStatus();

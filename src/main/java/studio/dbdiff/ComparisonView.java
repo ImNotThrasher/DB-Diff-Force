@@ -23,6 +23,8 @@ public final class ComparisonView extends JPanel {
     private final JTextArea emptyMessage = new JTextArea();
     private final JLabel sourceEndpoint = new JLabel("Sin seleccionar");
     private final JLabel targetEndpoint = new JLabel("Sin seleccionar");
+    private final JLabel sourceProfileBadge = new JLabel();
+    private final JLabel targetProfileBadge = new JLabel();
     private final JLabel modeNotice = new JLabel("Solo comparación de esquema");
     private final JTextArea summary = new JTextArea();
     private final DiffCodeEditor source = new DiffCodeEditor(false, true);
@@ -71,6 +73,12 @@ public final class ComparisonView extends JPanel {
 
     public void setDatabases(String sourceName, String targetName, String sourceServer, String targetServer,
                              String sourceLocationTooltip) {
+        setDatabases(sourceName, targetName, sourceServer, targetServer, sourceLocationTooltip, null, null);
+    }
+
+    public void setDatabases(String sourceName, String targetName, String sourceServer, String targetServer,
+                             String sourceLocationTooltip, ConnectionProfile sourceProfile,
+                             ConnectionProfile targetProfile) {
         String source = endpointName(sourceServer, sourceName);
         String target = endpointName(targetServer, targetName);
         String sourceTooltip = sourceLocationTooltip == null || sourceLocationTooltip.isBlank()
@@ -79,6 +87,8 @@ public final class ComparisonView extends JPanel {
         targetEndpoint.setText(target); targetEndpoint.setToolTipText(target);
         sourceHeading.setText("ORIGEN · " + displayName(sourceName)); sourceHeading.setToolTipText(sourceTooltip);
         targetHeading.setText("DESTINO · " + displayName(targetName));
+        setProfileBadge(sourceProfileBadge, sourceProfile);
+        setProfileBadge(targetProfileBadge, targetProfile);
     }
 
     public void setFlywayMode(boolean flyway) {
@@ -128,9 +138,16 @@ public final class ComparisonView extends JPanel {
     private JPanel headerPanel() {
         JPanel panel = new JPanel(new BorderLayout(10, 12));
         JPanel labels = new JPanel(new BorderLayout(10, 0)); labels.setOpaque(false);
-        JPanel endpoints = new JPanel(new java.awt.GridLayout(1, 2, 12, 0));
-        endpoints.add(endpointPanel("Origen", sourceEndpoint));
-        endpoints.add(endpointPanel("Destino", targetEndpoint));
+        JPanel endpoints = new JPanel(new java.awt.GridBagLayout());
+        java.awt.GridBagConstraints endpoint = new java.awt.GridBagConstraints();
+        endpoint.gridy = 0; endpoint.fill = java.awt.GridBagConstraints.HORIZONTAL; endpoint.weightx = 1;
+        endpoint.gridx = 0; endpoints.add(endpointPanel("Origen", sourceEndpoint, sourceProfileBadge), endpoint);
+        JLabel direction = new JLabel(UiIcons.themed(UiIcons.TARGET_ONLY, 18));
+        direction.setToolTipText("Dirección de comparación: origen → destino");
+        endpoint.gridx = 1; endpoint.weightx = 0; endpoint.insets = new java.awt.Insets(0, 12, 0, 12);
+        endpoints.add(direction, endpoint);
+        endpoint.gridx = 2; endpoint.weightx = 1; endpoint.insets = new java.awt.Insets(0, 0, 0, 0);
+        endpoints.add(endpointPanel("Destino", targetEndpoint, targetProfileBadge), endpoint);
         summary.setRows(1); summary.setEditable(false); summary.setLineWrap(true); summary.setWrapStyleWord(true);
         summary.setOpaque(false); summary.setFont(javax.swing.UIManager.getFont("Label.font")); summary.setBorder(null);
         labels.add(endpoints, BorderLayout.CENTER);
@@ -151,12 +168,23 @@ public final class ComparisonView extends JPanel {
         return panel;
     }
 
-    private static JPanel endpointPanel(String title, JLabel value) {
+    private static JPanel endpointPanel(String title, JLabel value, JLabel profileBadge) {
         JPanel panel = new JPanel(new BorderLayout(0, 3));
         JLabel heading = new JLabel(title); heading.putClientProperty("FlatLaf.styleClass", "small");
         value.setMinimumSize(new java.awt.Dimension(0, value.getPreferredSize().height));
-        panel.add(heading, BorderLayout.NORTH); panel.add(value, BorderLayout.CENTER);
+        JPanel details = new JPanel(new BorderLayout(8, 0)); details.setOpaque(false);
+        details.add(value, BorderLayout.CENTER); details.add(profileBadge, BorderLayout.EAST);
+        panel.add(heading, BorderLayout.NORTH); panel.add(details, BorderLayout.CENTER);
         return panel;
+    }
+
+    private static void setProfileBadge(JLabel badge, ConnectionProfile profile) {
+        badge.setVisible(profile != null && profile.hasMarker());
+        if (profile == null) { badge.setIcon(null); badge.setText(""); badge.setToolTipText(null); return; }
+        badge.setIcon(UiIcons.colorDot(profile.markerColor(), 14));
+        badge.setText(profile.environment());
+        badge.setToolTipText(profile.environment().isBlank() ? "Perfil: " + profile.name()
+                : "Perfil: " + profile.name() + " · Ambiente: " + profile.environment());
     }
 
     private void showMode(String mode) {

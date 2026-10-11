@@ -15,7 +15,8 @@ final class ConnectionDialog extends JDialog {
         SourceMode(String label) { this.label = label; }
         @Override public String toString() { return label; }
     }
-    record Selection(SourceMode mode, Endpoint origin, Endpoint destination, java.nio.file.Path sourceFolder, boolean autoRestored) { }
+    record Selection(SourceMode mode, Endpoint origin, Endpoint destination, java.nio.file.Path sourceFolder,
+                     boolean autoRestored, ConnectionProfile originProfile, ConnectionProfile destinationProfile) { }
 
     private Selection selection;
     static Selection showDialog(JFrame owner, String theme) {
@@ -191,6 +192,19 @@ final class ConnectionDialog extends JDialog {
         c.gridx = 0; c.gridy = 0; c.gridwidth = 2; JLabel title = new JLabel(side == 0 ? "BASE DE ORIGEN" : "BASE DE DESTINO"); title.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD)); panel.add(title, c);
         c.gridy++; c.gridwidth = 1; c.weightx = 0; panel.add(new JLabel("Perfil"), c);
         JComboBox<String> savedChoice = savedChoices.get(side); savedChoice.setPrototypeDisplayValue("Elegí un perfil guardado"); refreshSavedChoices(side, null);
+        savedChoice.setRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                    boolean selected, boolean focused) {
+                JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, selected, focused);
+                ConnectionProfile profile = value == null ? null : savedProfiles.get(value.toString());
+                label.setIcon(profile == null ? null : UiIcons.colorDot(profile.markerColor(), 14));
+                label.setText(profile == null ? Objects.toString(value, "")
+                        : profile.name() + (profile.environment().isBlank() ? "" : " · " + profile.environment()));
+                label.setToolTipText(profile == null ? null : profile.environment().isBlank()
+                        ? profile.name() : profile.name() + " · " + profile.environment());
+                return label;
+            }
+        });
         JButton saveProfile = new JButton("Guardar perfil"), deleteProfile = new JButton("Eliminar");
         saveProfile.setToolTipText("Guardar la conexión actual con un nombre para reutilizarla");
         deleteProfile.setToolTipText("Eliminar el perfil seleccionado para este lado");
@@ -343,24 +357,67 @@ final class ConnectionDialog extends JDialog {
         String selectedName = (String) savedChoices.get(side).getSelectedItem();
         if (selectedName == null || selectedName.equals("Elegí un perfil guardado")) selectedName = "";
         String initialName = selectedName.isBlank() ? fields[side][0].getText().trim() + " / " + databases.get(side).getSelectedItem() : selectedName;
-        String name = JOptionPane.showInputDialog(this, "Nombre del perfil de conexión:", initialName);
-        if (name == null || name.isBlank()) return;
+        ConnectionProfile previous = savedProfiles.get(selectedName);
+        JTextField name = new JTextField(initialName, 24);
+        JTextField environment = new JTextField(previous == null ? "" : previous.environment(), 24);
+        Color[] markerColor = {previous == null ? Color.decode(ConnectionProfile.DEFAULT_COLOR) : previous.markerColor()};
+        JLabel colorSample = new JLabel(UiIcons.colorDot(markerColor[0], 18));
+        JButton chooseColor = new JButton("Elegir color…");
+        chooseColor.addActionListener(event -> {
+            Color chosen = JColorChooser.showDialog(this, "Color del perfil", markerColor[0]);
+            if (chosen != null) { markerColor[0] = chosen; colorSample.setIcon(UiIcons.colorDot(chosen, 18)); }
+        });
+        JPanel profileForm = new JPanel(new GridBagLayout());
+        GridBagConstraints form = new GridBagConstraints(); form.insets = new Insets(5, 5, 5, 5); form.anchor = GridBagConstraints.WEST;
+        form.gridx = 0; form.gridy = 0; profileForm.add(new JLabel("Nombre del perfil"), form);
+        form.gridx = 1; form.weightx = 1; form.fill = GridBagConstraints.HORIZONTAL; profileForm.add(name, form);
+        form.gridx = 0; form.gridy++; form.weightx = 0; form.fill = GridBagConstraints.NONE; profileForm.add(new JLabel("Ambiente (opcional)"), form);
+        form.gridx = 1; form.weightx = 1; form.fill = GridBagConstraints.HORIZONTAL; profileForm.add(environment, form);
+        form.gridx = 0; form.gridy++; form.weightx = 0; form.fill = GridBagConstraints.NONE; profileForm.add(new JLabel("Color identificador"), form);
+        JPanel colorChoice = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0)); colorChoice.add(colorSample); colorChoice.add(chooseColor);
+        form.gridx = 1; form.weightx = 1; form.fill = GridBagConstraints.HORIZONTAL; profileForm.add(colorChoice, form);
+        int answer = JOptionPane.showConfirmDialog(this, profileForm, "Guardar perfil de conexión",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (answer != JOptionPane.OK_OPTION || name.getText().isBlank()) return;
         char[] password = passwords[side].getPassword();
         try {
-            ConnectionProfile previous = savedProfiles.get(name.trim());
-            ConnectionProfile profile = new ConnectionProfile(name.trim(), (DatabaseEngine) engine.getSelectedItem(),
+            String profileName = name.getText().trim();
+            previous = savedProfiles.get(profileName);
+            ConnectionProfile profile = new ConnectionProfile(profileName, (DatabaseEngine) engine.getSelectedItem(),
                     fields[side][0].getText().trim(), Integer.parseInt(fields[side][1].getText().trim()),
-                    (String) databases.get(side).getSelectedItem(), fields[side][2].getText().trim(), tls[side].isSelected(), false);
+                    (String) databases.get(side).getSelectedItem(), fields[side][2].getText().trim(), tls[side].isSelected(), false,
+                    environment.getText().trim(), colorHex(markerColor[0]));
             ConnectionProfiles.save(profile);
             if (rememberPasswords[side].isSelected()) {
                 ConnectionCredentialStore.save(profile.name(), password);
-                profile = new ConnectionProfile(profile.name(), profile.engine(), profile.host(), profile.port(), profile.database(), profile.user(), profile.useTls(), true);
+                profile = new ConnectionProfile(profile.name(), profile.engine(), profile.host(), profile.port(), profile.database(),
+                        profile.user(), profile.useTls(), true, profile.environment(), profile.colorHex());
                 ConnectionProfiles.save(profile);
             } else if (previous != null && previous.rememberPassword()) ConnectionCredentialStore.delete(profile.name());
             savedProfiles.put(profile.name(), profile); refreshSavedChoices(side, profile.name());
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "No se pudo guardar el perfil: " + ex.getMessage(), "Error al guardar", JOptionPane.ERROR_MESSAGE);
         } finally { Arrays.fill(password, '\0'); }
+    }
+
+    private static String colorHex(Color color) {
+        return String.format(Locale.ROOT, "#%02X%02X%02X", color.getRed(), color.getGreen(), color.getBlue());
+    }
+
+    private ConnectionProfile selectedProfile(int side) {
+        String name = (String) savedChoices.get(side).getSelectedItem();
+        ConnectionProfile profile = name == null ? null : savedProfiles.get(name);
+        Object database = databases.get(side).getSelectedItem();
+        if (profile == null || database == null) return null;
+        try {
+            boolean matches = profile.engine() == engine.getSelectedItem()
+                    && profile.host().equalsIgnoreCase(fields[side][0].getText().trim())
+                    && profile.port() == Integer.parseInt(fields[side][1].getText().trim())
+                    && profile.database().equals(database.toString())
+                    && profile.user().equals(fields[side][2].getText().trim())
+                    && profile.useTls() == tls[side].isSelected();
+            return matches ? profile : null;
+        } catch (NumberFormatException ignored) { return null; }
     }
 
     private void deleteProfile(int side) {
@@ -500,7 +557,8 @@ final class ConnectionDialog extends JDialog {
             }
             if (selectedMode != SourceMode.DATABASE && selectedSourceFolder == null)
                 throw new IllegalArgumentException("Seleccioná la carpeta del origen antes de continuar.");
-            selection = new Selection(selectedMode, origin, destination, selectedSourceFolder, autoRestored);
+            selection = new Selection(selectedMode, origin, destination, selectedSourceFolder, autoRestored,
+                    selectedMode == SourceMode.DATABASE ? selectedProfile(0) : null, selectedProfile(1));
             dispose();
         } catch (RuntimeException ex) {
             if (origin != null) origin.clearPassword();

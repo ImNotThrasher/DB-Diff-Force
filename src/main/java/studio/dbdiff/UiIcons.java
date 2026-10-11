@@ -36,6 +36,7 @@ final class UiIcons {
     private UiIcons() { }
 
     static Icon themed(Ikon icon, int size) { return new ThemeIcon(icon, size); }
+    static Icon colorDot(Color color, int size) { return new ColorDotIcon(color, size); }
 
     static List<Image> windowImages() {
         return List.of(16, 24, 32, 48, 64, 128).stream().map(size -> {
@@ -66,6 +67,21 @@ final class UiIcons {
             renderedIcon.paintIcon(component, graphics, x, y);
         }
 
+        @Override public int getIconWidth() { return size; }
+        @Override public int getIconHeight() { return size; }
+    }
+
+    private record ColorDotIcon(Color color, int size) implements Icon {
+        @Override public void paintIcon(Component component, Graphics graphics, int x, int y) {
+            Graphics copy = graphics.create();
+            try {
+                copy.setColor(color);
+                copy.fillOval(x + 2, y + 2, size - 4, size - 4);
+                copy.setColor(UIManager.getColor("Component.borderColor") == null
+                        ? Color.DARK_GRAY : UIManager.getColor("Component.borderColor"));
+                copy.drawOval(x + 2, y + 2, size - 4, size - 4);
+            } finally { copy.dispose(); }
+        }
         @Override public int getIconWidth() { return size; }
         @Override public int getIconHeight() { return size; }
     }
