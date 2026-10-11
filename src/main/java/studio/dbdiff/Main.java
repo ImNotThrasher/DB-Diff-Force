@@ -545,7 +545,7 @@ public final class Main {
         selectedSchemaResult = null;
         rowComparisonPanel.clearResult(false);
         if (objectCatalog.selectedValues().size() > 1) setRowComparisonVisible(false);
-        if (objectCatalog.selectedValues().size() > 1) { setBusy(false, "Varios objetos seleccionados"); comparisonView.showMessage("Seleccionaste varios objetos. Usá Exportar SQL para preparar sus scripts o Actualizar para volver a leerlos. Seleccioná un solo objeto para ver su definición."); return; }
+        if (objectCatalog.selectedValues().size() > 1) { setBusy(false, "Varios objetos seleccionados"); comparisonView.showMessage("Seleccionaste varios objetos. Usá Exportar esquema para preparar sus scripts o Actualizar para volver a leerlos. Seleccioná un solo objeto para ver su definición."); return; }
         Object item = objectCatalog.selectedValue();
         if (item != null) setBusy(false, "Objeto seleccionado · " + CatalogDisplay.objectKey(item).qualifiedName());
         if (item == null) { setRowComparisonVisible(false); comparisonView.showMessage(""); }

@@ -5,13 +5,20 @@ import javax.swing.ButtonGroup;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSplitPane;
+import javax.swing.JButton;
+import javax.swing.JTextField;
 import javax.swing.JTextArea;
 import javax.swing.JToggleButton;
+import javax.swing.KeyStroke;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
-import java.awt.Color;
 import java.awt.Font;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
+import java.util.ArrayList;
 import java.util.List;
 
 /** Side-by-side definitions or a unified diff for one schema object. */
@@ -36,6 +43,11 @@ public final class ComparisonView extends JPanel {
     private JToggleButton splitModeButton, unifiedModeButton;
     private JPanel modeNoticeBlock;
     private final JPanel cards = new JPanel(new CardLayout());
+    private final JTextField searchField = new JTextField(18);
+    private final JLabel searchCount = new JLabel("0/0");
+    private final JPanel searchBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0));
+    private final List<SearchMatch> searchMatches = new ArrayList<>();
+    private int activeSearchMatch = -1;
     private DiffEngine.Result current;
     private boolean dark;
 
@@ -59,6 +71,7 @@ public final class ComparisonView extends JPanel {
         modeNotice.setFont(javax.swing.UIManager.getFont("Label.font"));
         modeNotice.setForeground(javax.swing.UIManager.getColor("Label.disabledForeground"));
         add(cards, BorderLayout.CENTER);
+        configureSearch();
         showMode(SPLIT);
         syncVerticalScroll(source, target);
     }
@@ -118,6 +131,7 @@ public final class ComparisonView extends JPanel {
         emptyMessage.setText(text == null || text.isBlank() ? "Seleccioná un objeto de la lista para ver su definición y sus diferencias." : text);
         source.clear(); target.clear(); unified.clear();
         ((CardLayout) cards.getLayout()).show(cards, EMPTY);
+        refreshSearch();
     }
 
     public void showResult(DiffEngine.Result result, boolean dark) {
@@ -133,6 +147,7 @@ public final class ComparisonView extends JPanel {
         target.showContent(right, targetRows, dark, result.target() != null);
         String unifiedText = String.join("\n", result.diffLines().stream().map(DiffEngine.DiffLine::text).toList());
         unified.showContent(unifiedText, result.diffLines(), dark, true);
+        refreshSearch();
     }
 
     private JPanel headerPanel() {
@@ -160,7 +175,34 @@ public final class ComparisonView extends JPanel {
         splitModeButton.setToolTipText("Ver origen y destino en paralelo"); unifiedModeButton.setToolTipText("Ver el diff con números de origen y destino");
         ButtonGroup modes = new ButtonGroup(); modes.add(splitModeButton); modes.add(unifiedModeButton); splitModeButton.setSelected(true);
         splitModeButton.addActionListener(e -> showMode(SPLIT)); unifiedModeButton.addActionListener(e -> showMode(UNIFIED));
-        JPanel choices = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0)); choices.setOpaque(false); choices.add(splitModeButton); choices.add(unifiedModeButton);
+        searchBar.setOpaque(false);
+        searchField.putClientProperty("JTextField.placeholderText", "Buscar texto...");
+        searchField.putClientProperty("JTextField.leadingIcon", UiIcons.themed(UiIcons.SEARCH, 16));
+        searchField.setToolTipText("Buscar en el código visible");
+        JButton previousMatch = new JButton("‹");
+        JButton nextMatch = new JButton("›");
+        previousMatch.setToolTipText("Coincidencia anterior (Shift+Enter)");
+        nextMatch.setToolTipText("Coincidencia siguiente (Enter)");
+        searchBar.add(searchField); searchBar.add(searchCount);
+        searchBar.add(previousMatch); searchBar.add(nextMatch);
+        previousMatch.addActionListener(e -> navigateSearch(-1));
+        nextMatch.addActionListener(e -> navigateSearch(1));
+        searchField.addActionListener(e -> navigateSearch(1));
+        searchField.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, KeyEvent.SHIFT_DOWN_MASK), "previous-match");
+        searchField.getActionMap().put("previous-match", new javax.swing.AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) { navigateSearch(-1); }
+        });
+        searchField.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "clear-search");
+        searchField.getActionMap().put("clear-search", new javax.swing.AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) { searchField.setText(""); }
+        });
+        searchField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent event) { searchTextChanged(); }
+            @Override public void removeUpdate(DocumentEvent event) { searchTextChanged(); }
+            @Override public void changedUpdate(DocumentEvent event) { searchTextChanged(); }
+        });
+        JPanel choices = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0)); choices.setOpaque(false);
+        choices.add(searchBar); choices.add(splitModeButton); choices.add(unifiedModeButton);
         JPanel objectBar = new JPanel(new BorderLayout(8, 0));
         objectBar.setBorder(new EmptyBorder(0, 0, 8, 0));
         objectBar.add(summary, BorderLayout.CENTER); objectBar.add(choices, BorderLayout.EAST);
@@ -199,7 +241,67 @@ public final class ComparisonView extends JPanel {
             AppTheme.styleToggleButton(splitModeButton, dark);
             AppTheme.styleToggleButton(unifiedModeButton, dark);
         }
+        refreshSearch();
     }
+
+    private void configureSearch() {
+        getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(
+                KeyStroke.getKeyStroke(KeyEvent.VK_F, KeyEvent.CTRL_DOWN_MASK), "open-code-search");
+        getActionMap().put("open-code-search", new javax.swing.AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) {
+                searchField.requestFocusInWindow();
+                searchField.selectAll();
+            }
+        });
+    }
+
+    private void searchTextChanged() {
+        activeSearchMatch = 0;
+        refreshSearch();
+    }
+
+    private void refreshSearch() {
+        for (DiffCodeEditor editor : List.of(source, target, unified)) editor.clearSearchHighlights();
+        searchMatches.clear();
+        String query = searchField.getText();
+        if (current != null && query != null && !query.isEmpty()) {
+            List<DiffCodeEditor> editors = switch (selectedMode) {
+                case UNIFIED -> List.of(unified);
+                case SPLIT -> List.of(source, target);
+                default -> List.of();
+            };
+            for (DiffCodeEditor editor : editors) {
+                for (int offset : editor.findOffsets(query)) searchMatches.add(new SearchMatch(editor, offset));
+            }
+        }
+        if (searchMatches.isEmpty()) activeSearchMatch = -1;
+        else activeSearchMatch = Math.floorMod(activeSearchMatch, searchMatches.size());
+        for (DiffCodeEditor editor : List.of(source, target, unified)) {
+            List<Integer> offsets = new ArrayList<>();
+            int localActive = -1;
+            for (int index = 0; index < searchMatches.size(); index++) {
+                SearchMatch match = searchMatches.get(index);
+                if (match.editor() == editor) {
+                    if (index == activeSearchMatch) localActive = offsets.size();
+                    offsets.add(match.offset());
+                }
+            }
+            editor.showSearchHighlights(offsets, query == null ? 0 : query.length(), localActive);
+        }
+        searchCount.setText(searchMatches.isEmpty() ? "0/0" : (activeSearchMatch + 1) + "/" + searchMatches.size());
+        if (activeSearchMatch >= 0 && !searchMatches.isEmpty()) {
+            SearchMatch match = searchMatches.get(activeSearchMatch);
+            match.editor().revealSearchMatch(match.offset());
+        }
+    }
+
+    private void navigateSearch(int direction) {
+        if (searchMatches.isEmpty()) return;
+        activeSearchMatch = Math.floorMod(activeSearchMatch + direction, searchMatches.size());
+        refreshSearch();
+    }
+
+    private record SearchMatch(DiffCodeEditor editor, int offset) { }
 
     private static String displayName(String name) { return name == null || name.isBlank() ? "(sin seleccionar)" : name; }
 

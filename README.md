@@ -6,7 +6,7 @@
 ![MySQL](https://img.shields.io/badge/MySQL-compatible-4479A1?logo=mysql&logoColor=white)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-compatible-CC2927?logo=microsoftsqlserver&logoColor=white)
 
-DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB, MySQL y SQL Server, y exportar SQL para revisar. Al iniciar una comparación se puede elegir entre dos bases, una base con definiciones SQL completas de una carpeta o una base con un esquema reconstruido desde migraciones Flyway. Permite elegir tablas, vistas, rutinas y triggers, muestra objetos faltantes o modificados y genera SQL para los elementos seleccionados. La aplicación nunca ejecuta el SQL generado.
+DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB, MySQL y SQL Server y generar SQL para revisión. Permite comparar dos bases de datos, una base de datos con definiciones `CREATE` completas almacenadas en una carpeta, o una base de datos con el esquema reconstruido a partir de migraciones Flyway. Compara tablas, vistas, rutinas y triggers, e identifica objetos faltantes o modificados. El SQL generado se puede revisar y guardar, pero la aplicación nunca lo ejecuta.
 
 ## Índice
 
@@ -32,7 +32,7 @@ En **Nueva comparación**, elegí el tipo de origen. **Base de datos** muestra l
 
 Para reconstruir el esquema de migraciones Flyway, elegí **Migraciones Flyway** en **Nueva comparación** y seleccioná la carpeta de migraciones versionadas (`V1__...sql`, `V2__...sql`), por ejemplo `src/main/resources/db/migration`; no selecciones la raíz del proyecto si también contiene una copia compilada en `target/classes`. Antes de crear nada, la aplicación pide autorización. Flyway se ejecuta en una base temporal de nombre único creada en el servidor de destino; la aplicación lee el esquema resultante y elimina la base temporal antes de mostrar la comparación. Luego compara ese esquema reconstruido (origen) con la base destino. No modifica directamente la base destino. Revisá las migraciones: SQL que haga referencia explícita a otras bases o servidores podría afectarlos. La cuenta del destino debe tener permisos para crear y eliminar bases de datos. Si la limpieza falla, el error informa el nombre de la base temporal para permitir su revisión manual.
 
-Al conectar, la lista de objetos queda marcada como **sin comparar** hasta que se ejecute el análisis. Usá Ctrl+clic o Mayús+clic para seleccionar objetos. **Comparar** analiza los objetos seleccionados; si no seleccionás ninguno, analiza todos los tipos habilitados. Para comparar filas, seleccioná una tabla que ya se haya comparado. **Exportar SQL** solo incluye los resultados seleccionados; si no seleccionaste ninguno, la aplicación te pide que elijas en vez de exportarlo todo.
+Al conectar, la lista de objetos queda marcada como **sin comparar** hasta que se ejecute el análisis. Usá Ctrl+clic o Mayús+clic para seleccionar objetos. **Comparar** analiza los objetos seleccionados; si no seleccionás ninguno, analiza todos los tipos habilitados. Para comparar filas, seleccioná una tabla que ya se haya comparado. **Exportar esquema** genera SQL solo para los resultados seleccionados; si no seleccionaste ninguno, la aplicación te pide que elijas en vez de exportarlo todo.
 
 ## Capturas
 

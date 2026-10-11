@@ -12,12 +12,15 @@ import java.awt.font.FontRenderContext;
 import java.awt.RenderingHints;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Rectangle2D;
+import java.util.ArrayList;
 import java.util.List;
 
 import javax.swing.BorderFactory;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextPane;
+import javax.swing.text.DefaultHighlighter;
+import javax.swing.text.Highlighter;
 import javax.swing.border.EmptyBorder;
 import javax.swing.text.Element;
 import javax.swing.text.SimpleAttributeSet;
@@ -33,6 +36,7 @@ final class DiffCodeEditor extends JPanel {
     private final DiffGutter gutter;
     private final JScrollPane scrollPane;
     private String codeFontFamily = AUTO_FONT;
+    private final List<Object> searchHighlights = new ArrayList<>();
 
     DiffCodeEditor(boolean unifiedMode, boolean sourceSide) {
         super(new BorderLayout());
@@ -55,6 +59,7 @@ final class DiffCodeEditor extends JPanel {
     }
 
     void clear() {
+        clearSearchHighlights();
         text.setRows(List.of());
         text.setText("");
         gutter.setRows(List.of());
@@ -79,6 +84,55 @@ final class DiffCodeEditor extends JPanel {
     }
 
     JScrollPane scrollPane() { return scrollPane; }
+
+    List<Integer> findOffsets(String query) {
+        List<Integer> offsets = new ArrayList<>();
+        if (query == null || query.isEmpty()) return offsets;
+        String content = text.getText();
+        for (int offset = 0; offset <= content.length() - query.length(); offset++) {
+            if (content.regionMatches(true, offset, query, 0, query.length())) {
+                offsets.add(offset);
+                offset += query.length() - 1;
+            }
+        }
+        return offsets;
+    }
+
+    void showSearchHighlights(List<Integer> offsets, int matchLength, int activeIndex) {
+        clearSearchHighlights();
+        Highlighter highlighter = text.getHighlighter();
+        for (int index = 0; index < offsets.size(); index++) {
+            int start = offsets.get(index);
+            try {
+                Color color = index == activeIndex ? new Color(230, 151, 53, 210) : new Color(214, 184, 50, 150);
+                Object tag = highlighter.addHighlight(start, start + matchLength,
+                        new DefaultHighlighter.DefaultHighlightPainter(color));
+                searchHighlights.add(tag);
+            } catch (javax.swing.text.BadLocationException ignored) {
+                // A document refresh can invalidate offsets; the next search rebuilds them.
+            }
+        }
+    }
+
+    void clearSearchHighlights() {
+        Highlighter highlighter = text.getHighlighter();
+        for (Object highlight : searchHighlights) highlighter.removeHighlight(highlight);
+        searchHighlights.clear();
+    }
+
+    void revealSearchMatch(int offset) {
+        text.setCaretPosition(Math.min(offset, text.getDocument().getLength()));
+        try {
+            Rectangle2D bounds = text.modelToView2D(offset);
+            if (bounds != null) {
+                bounds.setRect(bounds.getX(), bounds.getY(), Math.max(1, bounds.getWidth()),
+                        Math.max(text.getFontMetrics(text.getFont()).getHeight(), bounds.getHeight()));
+                text.scrollRectToVisible(bounds.getBounds());
+            }
+        } catch (javax.swing.text.BadLocationException ignored) {
+            // Ignore stale offsets; search results are recalculated after document changes.
+        }
+    }
 
     private static String tooltip(DiffEngine.DiffLine line) {
         return switch (line.type()) {
