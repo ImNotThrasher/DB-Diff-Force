@@ -760,7 +760,7 @@ public final class Main {
     }
 
     private void setRowComparisonVisible(boolean visible) {
-        if (currentSelection != null && currentSelection.mode() == ConnectionDialog.SourceMode.FLYWAY) visible = false;
+        if (currentSelection != null && currentSelection.mode() != ConnectionDialog.SourceMode.DATABASE) visible = false;
         boolean wasVisible = rowComparisonPanel.isVisible();
         if (wasVisible == visible) return;
         if (!visible) {

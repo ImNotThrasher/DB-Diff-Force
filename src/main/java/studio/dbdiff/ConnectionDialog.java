@@ -51,7 +51,8 @@ final class ConnectionDialog extends JDialog {
     private final JPanel originCards = new JPanel(new CardLayout());
     private final JTextField sourceFolderField = new JTextField();
     private final JLabel sourceCardTitle = new JLabel("ORIGEN");
-    private final JLabel sourceCardDescription = new JLabel();
+    private final JTextArea sourceCardDescription = new JTextArea();
+    private final JTextArea sourceCardNotice = new JTextArea();
     private java.nio.file.Path selectedSourceFolder;
     private JButton connectButton;
     private final JTextField[] firstFields = new JTextField[2];
@@ -233,13 +234,39 @@ final class ConnectionDialog extends JDialog {
         panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createTitledBorder(""), new EmptyBorder(12, 12, 12, 12)));
         GridBagConstraints c = new GridBagConstraints(); c.gridx = 0; c.gridy = 0; c.gridwidth = 2; c.anchor = GridBagConstraints.WEST; c.insets = new Insets(5, 4, 8, 4);
         sourceCardTitle.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD)); panel.add(sourceCardTitle, c);
-        c.gridy++; sourceCardDescription.setVerticalAlignment(SwingConstants.TOP); sourceCardDescription.setPreferredSize(new Dimension(360, 100)); panel.add(sourceCardDescription, c);
+        configureWrappedSourceText(sourceCardDescription);
+        configureWrappedSourceText(sourceCardNotice);
+        sourceCardNotice.setForeground(sourceNoticeColor());
+        JPanel noticePanel = new JPanel(new BorderLayout());
+        noticePanel.setOpaque(false);
+        noticePanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 3, 0, 0, sourceNoticeColor()),
+                new EmptyBorder(3, 8, 3, 4)));
+        noticePanel.add(sourceCardNotice, BorderLayout.CENTER);
+        c.gridy++; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1; c.insets = new Insets(0, 4, 4, 4); panel.add(sourceCardDescription, c);
+        c.gridy++; c.insets = new Insets(0, 4, 8, 4); panel.add(noticePanel, c);
         c.gridy++; c.gridwidth = 1; c.insets = new Insets(4, 4, 4, 4); panel.add(new JLabel("Carpeta"), c);
         sourceFolderField.setEditable(false); sourceFolderField.setText("Seleccioná una carpeta…");
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(sourceFolderField, c);
         JButton chooseFolder = new JButton("Examinar…"); c.gridy++; c.gridx = 1; c.weightx = 0; c.fill = GridBagConstraints.NONE; c.anchor = GridBagConstraints.EAST; panel.add(chooseFolder, c);
         chooseFolder.addActionListener(event -> chooseSourceFolder());
         return panel;
+    }
+
+    private static void configureWrappedSourceText(JTextArea text) {
+        text.setEditable(false);
+        text.setFocusable(false);
+        text.setLineWrap(true);
+        text.setWrapStyleWord(true);
+        text.setOpaque(false);
+        text.setBorder(null);
+        text.setFont(UIManager.getFont("Label.font"));
+        text.setRows(2);
+    }
+
+    private static Color sourceNoticeColor() {
+        Color color = UIManager.getColor("Component.focusColor");
+        return color != null ? color : UIManager.getColor("Label.foreground");
     }
 
     private void updateSourceMode() {
@@ -253,9 +280,10 @@ final class ConnectionDialog extends JDialog {
             selectedSourceFolder = null; sourceFolderField.setText("Seleccioná una carpeta…");
             sourceCardTitle.setText(mode == SourceMode.FLYWAY ? "ORIGEN · MIGRACIONES FLYWAY" : "ORIGEN · SNAPSHOT SQL");
             sourceCardDescription.setText(mode == SourceMode.FLYWAY
-                    ? "<html><div style='width:350px'>Elegí la carpeta con migraciones versionadas. Se ejecutan en una base temporal del servidor destino; la base destino no se modifica directamente. Se compara solo el esquema (estructuras y objetos), no los datos de filas.</div></html>"
-                    : "<html><div style='width:350px'>Elegí una carpeta con definiciones CREATE completas, una por objeto. El SQL se lee para comparar; no se ejecuta.</div></html>");
-            sourceCardDescription.setPreferredSize(new Dimension(360, mode == SourceMode.FLYWAY ? 100 : 72));
+                    ? "Elegí la carpeta con migraciones versionadas. Se ejecutan en una base temporal del servidor destino; la base destino no se modifica directamente."
+                    : "Elegí una carpeta con definiciones CREATE completas, una por objeto. El SQL se lee para comparar; no se ejecuta.");
+            sourceCardNotice.setText("Se compara solo el esquema (estructuras y objetos); no se comparan datos de filas.");
+            sourceCardNotice.setVisible(true);
             testButtons[0].setEnabled(false);
         } else {
             testButtons[0].setEnabled(true);
