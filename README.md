@@ -5,6 +5,7 @@
 ![MariaDB](https://img.shields.io/badge/MariaDB-compatible-003545?logo=mariadb&logoColor=white)
 ![MySQL](https://img.shields.io/badge/MySQL-compatible-4479A1?logo=mysql&logoColor=white)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-compatible-CC2927?logo=microsoftsqlserver&logoColor=white)
+[![Licencia: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE)
 
 DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB, MySQL y SQL Server y generar SQL para revisión. Permite comparar dos bases de datos, una base de datos con definiciones `CREATE` completas almacenadas en una carpeta, o una base de datos con el esquema reconstruido a partir de migraciones Flyway. Compara tablas, vistas, rutinas y triggers, e identifica objetos faltantes o modificados. El SQL generado se puede revisar y guardar, pero la aplicación nunca lo ejecuta.
 
@@ -14,6 +15,7 @@ DB-Diff-Force es una aplicación de escritorio para comparar esquemas de MariaDB
 - [Ejecución](#ejecución)
 - [Alcance actual](#alcance-actual)
 - [Diseño](#diseño)
+- [Licencia](#licencia)
 
 ## Requisitos
 
@@ -72,3 +74,9 @@ Los permisos o la versión del servidor pueden impedir leer metadatos o definici
 ## Diseño
 
 La aplicación usa Java 21 y Swing. Maven administra las dependencias JDBC y prepara un JAR ejecutable con sus bibliotecas en `target/lib`. El acceso JDBC y la extracción de objetos se implementan detrás de `DatabaseConnector`; MariaDB y MySQL comparten una implementación y SQL Server tiene su propio conector. La interfaz ejecuta las operaciones de base de datos fuera del hilo de eventos y administra las contraseñas temporales usadas para iniciar sesión.
+
+## Licencia
+
+Copyright (C) 2026 Sergio Robles.
+
+El código propio de DB-Diff-Force se distribuye bajo la **GNU General Public License v3.0 solamente (GPL-3.0-only)**. Se permite el uso comercial. Si distribuís una versión modificada, debés conservar esta licencia y ofrecer el código fuente correspondiente conforme a sus términos. Los cambios que se usan de forma privada no requieren publicarse. El texto completo está en [`LICENSE`](LICENSE); el JAR también incluye una copia en `META-INF/LICENSE`. Las dependencias de terceros conservan sus propias licencias y avisos.
