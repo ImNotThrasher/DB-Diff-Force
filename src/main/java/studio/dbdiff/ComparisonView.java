@@ -241,11 +241,15 @@ public final class ComparisonView extends JPanel {
     }
 
     private void updateComparisonOptions() {
-        List<String> active = new ArrayList<>();
-        if (ignoreMySqlDefiner) active.add("DEFINER");
-        if (ignoreMySqlEnvironmentQualifiers) active.add("calificador de base de los triggers");
-        if (ignoreComments) active.add("comentarios");
-        if (ignoreAutoIncrement) active.add("contador AUTO_INCREMENT");
+        List<ComparisonOption> active = new ArrayList<>();
+        if (ignoreMySqlDefiner) active.add(new ComparisonOption("DEFINER",
+                "Ignora la cláusula DEFINER de vistas, rutinas y triggers al comparar. El SQL original se conserva."));
+        if (ignoreMySqlEnvironmentQualifiers) active.add(new ComparisonOption("Base del trigger",
+                "Ignora el calificador de base de datos en el nombre del trigger, útil al comparar entornos con bases distintas."));
+        if (ignoreComments) active.add(new ComparisonOption("Comentarios SQL",
+                "Ignora comentarios comunes al comparar SQL. Conserva comentarios ejecutables y pistas del optimizador."));
+        if (ignoreAutoIncrement) active.add(new ComparisonOption("AUTO_INCREMENT",
+                "Ignora el próximo valor del contador AUTO_INCREMENT de las tablas. No ignora la columna ni la clave primaria."));
         comparisonOptions.removeAll();
         if (!active.isEmpty()) {
             comparisonOptions.add(comparisonOptionsHeading);
@@ -255,8 +259,9 @@ public final class ComparisonView extends JPanel {
         revalidate();
     }
 
-    private static JLabel optionChip(String text) {
-        JLabel chip = new JLabel(text);
+    private static JLabel optionChip(ComparisonOption option) {
+        JLabel chip = new JLabel(option.label());
+        chip.setToolTipText(option.tooltip());
         chip.setFont(UIManager.getFont("Label.font").deriveFont(Font.PLAIN, UIManager.getFont("Label.font").getSize2D() - 1f));
         chip.setForeground(UIManager.getColor("Label.foreground"));
         chip.setOpaque(true);
@@ -267,6 +272,8 @@ public final class ComparisonView extends JPanel {
                 new EmptyBorder(2, 7, 2, 7)));
         return chip;
     }
+
+    private record ComparisonOption(String label, String tooltip) { }
 
     private static JPanel endpointPanel(String title, JLabel value, JLabel profileBadge) {
         JPanel panel = new JPanel(new BorderLayout(0, 3));
