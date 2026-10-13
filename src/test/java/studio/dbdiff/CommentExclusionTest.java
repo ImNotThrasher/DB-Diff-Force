@@ -12,7 +12,7 @@ class CommentExclusionTest {
         return new DiffEngine().compare(
                 List.of(new SchemaObject(key, left, SqlDefinitionCanonicalizer.signature(left, dialect, false))),
                 List.of(new SchemaObject(key, right, SqlDefinitionCanonicalizer.signature(right, dialect, false))),
-                Set.of(key.kind()), Set.of(), false, ignore, DatabaseEngine.MARIADB).getFirst();
+                Set.of(key.kind()), Set.of(), false, ignore, true, DatabaseEngine.MARIADB).getFirst();
     }
 
     @Test void ignoresOnlyCommentAndKeepsOriginalSql() {

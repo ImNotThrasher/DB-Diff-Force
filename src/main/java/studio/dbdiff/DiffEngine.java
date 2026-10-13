@@ -14,12 +14,12 @@ public final class DiffEngine {
 
     public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds,
                                 Set<SchemaObject.Key> selected, boolean ignoreMySqlViewDefiner) {
-        return compare(source, target, kinds, selected, ignoreMySqlViewDefiner, false, DatabaseEngine.MARIADB);
+        return compare(source, target, kinds, selected, ignoreMySqlViewDefiner, false, true, DatabaseEngine.MARIADB);
     }
 
     public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds,
                                 Set<SchemaObject.Key> selected, boolean ignoreMySqlViewDefiner,
-                                boolean ignoreComments, DatabaseEngine engine) {
+                                boolean ignoreComments, boolean ignoreAutoIncrement, DatabaseEngine engine) {
         var dialect = engine == DatabaseEngine.SQLSERVER ? SqlDefinitionCanonicalizer.Dialect.SQL_SERVER
                 : SqlDefinitionCanonicalizer.Dialect.MYSQL;
         Map<SchemaObject.Key, SchemaObject> left = index(source), right = index(target);
@@ -37,9 +37,10 @@ public final class DiffEngine {
                 leftDefinition = SqlDefinitionCanonicalizer.withoutComments(leftDefinition, dialect);
                 rightDefinition = SqlDefinitionCanonicalizer.withoutComments(rightDefinition, dialect);
             }
-            boolean identical = a != null && b != null && (normalizeMySqlDefinition || ignoreComments
-                    ? SqlDefinitionCanonicalizer.signature(leftDefinition, dialect, key.kind() == SchemaObject.Kind.TABLE)
-                        .equals(SqlDefinitionCanonicalizer.signature(rightDefinition, dialect, key.kind() == SchemaObject.Kind.TABLE))
+            boolean compareCanonicalDefinitions = normalizeMySqlDefinition || ignoreComments || key.kind() == SchemaObject.Kind.TABLE;
+            boolean identical = a != null && b != null && (compareCanonicalDefinitions
+                    ? SqlDefinitionCanonicalizer.signature(leftDefinition, dialect, key.kind() == SchemaObject.Kind.TABLE, ignoreAutoIncrement)
+                        .equals(SqlDefinitionCanonicalizer.signature(rightDefinition, dialect, key.kind() == SchemaObject.Kind.TABLE, ignoreAutoIncrement))
                     : a.signature().equals(b.signature()));
             Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : identical ? Status.IDENTICAL : Status.CHANGED;
             List<DiffLine> diff = a != null && b != null

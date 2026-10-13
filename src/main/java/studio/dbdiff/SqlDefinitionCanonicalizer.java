@@ -70,6 +70,10 @@ final class SqlDefinitionCanonicalizer {
 
     /** Ignores SQL formatting and keyword case, preserving identifiers, literals, and comments. */
     static String signature(String sql, Dialect dialect, boolean tableDefinition) {
+        return signature(sql, dialect, tableDefinition, true);
+    }
+
+    static String signature(String sql, Dialect dialect, boolean tableDefinition, boolean ignoreAutoIncrement) {
         if (sql == null || sql.isEmpty()) return "";
         Set<String> keywords = dialect == Dialect.MYSQL ? MYSQL_KEYWORDS : SQL_SERVER_KEYWORDS;
         StringBuilder result = new StringBuilder(sql.length());
@@ -112,10 +116,11 @@ final class SqlDefinitionCanonicalizer {
                     cursor = prefixedStringEnd;
                     continue;
                 }
-                if (tableDefinition && word.equalsIgnoreCase("AUTO_INCREMENT")) {
+                if (tableDefinition && ignoreAutoIncrement && word.equalsIgnoreCase("AUTO_INCREMENT")) {
                     int metadataEnd = autoIncrementEnd(sql, end);
                     if (metadataEnd > end) {
-                        appendToken(result, 'M', "AUTO_INCREMENT=<value>");
+                        // This is table state, not schema: it may be present on
+                        // one server and absent on another after a dump/restore.
                         cursor = metadataEnd;
                         continue;
                     }

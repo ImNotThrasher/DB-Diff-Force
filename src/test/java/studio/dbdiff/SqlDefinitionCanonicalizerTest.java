@@ -79,6 +79,13 @@ class SqlDefinitionCanonicalizerTest {
         assertSameMysql("CREATE TABLE `t` (`id` INT) AUTO_INCREMENT=12",
                 "create table `t` (`id` int) auto_increment = 987", true);
         assertDifferentMysql("SELECT 'AUTO_INCREMENT=12'", "select 'AUTO_INCREMENT=987'", true);
+        for (String table : List.of("taxonomia_nops", "actas", "unidad_determinaciones")) {
+            String source = "CREATE TABLE `" + table + "` (`id` int NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`)) ENGINE=InnoDB AUTO_INCREMENT=831 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+            String target = source.replace(" AUTO_INCREMENT=831", "");
+            assertSameMysql(source, target, true);
+            assertNotEquals(SqlDefinitionCanonicalizer.signature(source, SqlDefinitionCanonicalizer.Dialect.MYSQL, true, false),
+                    SqlDefinitionCanonicalizer.signature(target, SqlDefinitionCanonicalizer.Dialect.MYSQL, true, false));
+        }
     }
 
     @Test
