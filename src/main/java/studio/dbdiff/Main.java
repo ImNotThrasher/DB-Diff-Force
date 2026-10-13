@@ -84,7 +84,7 @@ public final class Main {
     private boolean ignoreMySqlDefiner;
     private boolean ignoreMySqlEnvironmentQualifiers;
     private boolean ignoreComments;
-    private boolean ignoreAutoIncrement = true;
+    private boolean ignoreAutoIncrement;
     private JPanel headerPanel, leftPanel;
     private JSplitPane workspaceSplit;
     private JSplitPane comparisonSplit;
@@ -1041,7 +1041,7 @@ public final class Main {
             ignoreMySqlDefiner = Boolean.parseBoolean(values.getProperty("ignoreMySqlDefiner", Boolean.toString(legacyIgnoreDefiner)));
             ignoreMySqlEnvironmentQualifiers = Boolean.parseBoolean(values.getProperty("ignoreMySqlEnvironmentQualifiers", Boolean.toString(legacyIgnoreDefiner)));
             ignoreComments = Boolean.parseBoolean(values.getProperty("ignoreComments", "false"));
-            ignoreAutoIncrement = Boolean.parseBoolean(values.getProperty("ignoreAutoIncrement", "true"));
+            ignoreAutoIncrement = Boolean.parseBoolean(values.getProperty("ignoreAutoIncrement", "false"));
             try { codeFontSize = Math.clamp(Integer.parseInt(values.getProperty("codeFontSize", "13")), 10, 24); }
             catch (NumberFormatException ignored) { codeFontSize = 13; }
         } catch (IOException ignored) { }

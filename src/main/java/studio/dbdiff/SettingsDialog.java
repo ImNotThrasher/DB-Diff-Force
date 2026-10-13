@@ -39,9 +39,18 @@ final class SettingsDialog {
         JPanel window = section("Ventana");
         JCheckBox remember = new JCheckBox("Recordar tamaño y posición de la ventana", rememberBounds);
         JCheckBox startMaximizedChoice = new JCheckBox("Iniciar maximizada", maximized);
-        JCheckBox stacked = new JCheckBox("Mostrar listado de objetos arriba (desmarcado: lateral)", !stackedLayout);
+        JCheckBox lateralObjects = new JCheckBox("Mostrar listado de objetos en el lateral", !stackedLayout);
+        lateralObjects.setToolTipText("Activado: el listado aparece a la izquierda de la comparación. Desactivado: aparece arriba.");
         JCheckBox keepRowsExpanded = new JCheckBox("Mantener Comparación de filas desplegada al cambiar de objeto", keepRowComparisonExpanded);
+        keepRowsExpanded.setToolTipText("<html>Al cambiar de tabla, carga sus registros para comparar las filas automáticamente.<br>Puede aumentar el tiempo de carga, especialmente en tablas grandes.</html>");
         JCheckBox rememberLast = new JCheckBox("Recordar y reconectar la última comparación al iniciar", rememberLastComparison);
+        rememberLast.setToolTipText("Guarda servidores, bases y carpeta de origen, nunca las contraseñas. La reconexión automática requiere credenciales guardadas en el almacén seguro del sistema.");
+        JPanel windowChoices = new JPanel(new GridLayout(0, 1, 0, 6));
+        windowChoices.add(lateralObjects); windowChoices.add(keepRowsExpanded); windowChoices.add(startMaximizedChoice);
+        windowChoices.add(remember); windowChoices.add(rememberLast);
+        window.add(windowChoices, BorderLayout.CENTER);
+
+        JPanel comparison = section("Comparación");
         JCheckBox ignoreDefiner = new JCheckBox("Ignorar DEFINER de vistas, rutinas y triggers", ignoreMySqlDefiner);
         ignoreDefiner.setToolTipText("Omite la cláusula DEFINER al comparar vistas, rutinas y triggers. El SQL original se conserva para mostrar y exportar.");
         JCheckBox ignoreEnvironmentQualifiers = new JCheckBox("Ignorar calificador de base en nombres de triggers", ignoreMySqlEnvironmentQualifiers);
@@ -50,10 +59,10 @@ final class SettingsDialog {
         ignoreCommentsChoice.setToolTipText("Conserva el SQL original y los comentarios ejecutables; ignora solo comentarios comunes.");
         JCheckBox ignoreAutoIncrementChoice = new JCheckBox("Ignorar contador AUTO_INCREMENT de las tablas", ignoreAutoIncrement);
         ignoreAutoIncrementChoice.setToolTipText("Ignora el próximo valor de la secuencia, no la columna AUTO_INCREMENT ni la clave primaria.");
-        rememberLast.setToolTipText("Guarda servidores, bases y carpeta de origen, nunca las contraseñas. La reconexión automática requiere credenciales guardadas en el almacén seguro del sistema.");
-        JPanel windowChoices = new JPanel(new GridLayout(0, 1, 0, 6));
-        windowChoices.add(remember); windowChoices.add(startMaximizedChoice); windowChoices.add(stacked); windowChoices.add(keepRowsExpanded); windowChoices.add(rememberLast); windowChoices.add(ignoreDefiner); windowChoices.add(ignoreEnvironmentQualifiers); windowChoices.add(ignoreCommentsChoice); windowChoices.add(ignoreAutoIncrementChoice);
-        window.add(windowChoices, BorderLayout.CENTER);
+        JPanel comparisonChoices = new JPanel(new GridLayout(0, 1, 0, 6));
+        comparisonChoices.add(ignoreDefiner); comparisonChoices.add(ignoreEnvironmentQualifiers);
+        comparisonChoices.add(ignoreCommentsChoice); comparisonChoices.add(ignoreAutoIncrementChoice);
+        comparison.add(comparisonChoices, BorderLayout.CENTER);
         JPanel code = section("Código");
         JPanel choices = new JPanel(new GridLayout(0, 1, 0, 6));
         choices.add(row("Fuente", fonts)); choices.add(row("Tamaño", sizes));
@@ -68,6 +77,8 @@ final class SettingsDialog {
         top.add(appearance);
         top.add(Box.createVerticalStrut(12));
         top.add(window);
+        top.add(Box.createVerticalStrut(12));
+        top.add(comparison);
         form.add(top, BorderLayout.NORTH); form.add(code, BorderLayout.CENTER);
         JTextArea storage = ReviewDialog.note("Perfiles y preferencias: " + Path.of(System.getProperty("user.home"), ".db-diff-studio")
                 + "\nContraseñas: almacén seguro del sistema operativo.");
@@ -75,7 +86,7 @@ final class SettingsDialog {
         form.add(ReviewDialog.disclosure("Almacenamiento", storage), BorderLayout.SOUTH);
         if (!ReviewDialog.confirm(owner, "Configuración", form, new Dimension(720, 780), "Guardar")) return null;
         return new Selection((String) themes.getSelectedItem(), fontFamily(fonts), (Integer) sizes.getValue(), remember.isSelected(),
-                startMaximizedChoice.isSelected(), !stacked.isSelected(), keepRowsExpanded.isSelected(), rememberLast.isSelected(),
+                startMaximizedChoice.isSelected(), !lateralObjects.isSelected(), keepRowsExpanded.isSelected(), rememberLast.isSelected(),
                 ignoreDefiner.isSelected(), ignoreEnvironmentQualifiers.isSelected(), ignoreCommentsChoice.isSelected(), ignoreAutoIncrementChoice.isSelected());
     }
 
