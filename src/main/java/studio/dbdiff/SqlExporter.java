@@ -244,7 +244,9 @@ public final class SqlExporter {
         if (object == null || unavailable(object)) return unavailableMessage(object);
         return switch (object.key().kind()) {
             case TABLE -> changedTableSql(result, targetDatabase, strategy, engine);
-            case VIEW -> statementWithReplace(object.definition(), true) + ";";
+            // The source DEFINER may not exist in the destination environment;
+            // omitting it lets MySQL/MariaDB assign the account applying the script.
+            case VIEW -> statementWithReplace(SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(object.definition()), true) + ";";
             case PROCEDURE, FUNCTION -> strategy == Strategy.CREATE_OR_REPLACE && engine == DatabaseEngine.MARIADB
                     ? routineCreate(statementWithReplace(object.definition(), true))
                     : routineReplace(object.key(), object.definition(), dropIfExists);
