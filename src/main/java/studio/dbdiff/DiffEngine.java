@@ -20,6 +20,14 @@ public final class DiffEngine {
     public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds,
                                 Set<SchemaObject.Key> selected, boolean ignoreMySqlViewDefiner,
                                 boolean ignoreComments, boolean ignoreAutoIncrement, DatabaseEngine engine) {
+        return compare(source, target, kinds, selected, ignoreMySqlViewDefiner, ignoreMySqlViewDefiner,
+                ignoreComments, ignoreAutoIncrement, engine);
+    }
+
+    public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds,
+                                Set<SchemaObject.Key> selected, boolean ignoreMySqlDefiner,
+                                boolean ignoreMySqlEnvironmentQualifiers, boolean ignoreComments,
+                                boolean ignoreAutoIncrement, DatabaseEngine engine) {
         var dialect = engine == DatabaseEngine.SQLSERVER ? SqlDefinitionCanonicalizer.Dialect.SQL_SERVER
                 : SqlDefinitionCanonicalizer.Dialect.MYSQL;
         Map<SchemaObject.Key, SchemaObject> left = index(source), right = index(target);
@@ -28,16 +36,19 @@ public final class DiffEngine {
         for (SchemaObject.Key key : keys) {
             if (!kinds.contains(key.kind()) || (!selected.isEmpty() && !selected.contains(key))) continue;
             SchemaObject a = left.get(key), b = right.get(key);
-            boolean normalizeMySqlDefinition = ignoreMySqlViewDefiner && engine != DatabaseEngine.SQLSERVER
+            boolean normalizeMySqlDefinition = engine != DatabaseEngine.SQLSERVER
                     && (key.kind() == SchemaObject.Kind.VIEW || key.kind() == SchemaObject.Kind.TRIGGER
                         || key.kind() == SchemaObject.Kind.PROCEDURE || key.kind() == SchemaObject.Kind.FUNCTION);
-            String leftDefinition = a == null ? "" : displayDefinition(a.definition(), key.kind(), normalizeMySqlDefinition);
-            String rightDefinition = b == null ? "" : displayDefinition(b.definition(), key.kind(), normalizeMySqlDefinition);
+            String leftDefinition = a == null ? "" : displayDefinition(a.definition(), key.kind(), normalizeMySqlDefinition,
+                    ignoreMySqlDefiner, ignoreMySqlEnvironmentQualifiers);
+            String rightDefinition = b == null ? "" : displayDefinition(b.definition(), key.kind(), normalizeMySqlDefinition,
+                    ignoreMySqlDefiner, ignoreMySqlEnvironmentQualifiers);
             if (ignoreComments) {
                 leftDefinition = SqlDefinitionCanonicalizer.withoutComments(leftDefinition, dialect);
                 rightDefinition = SqlDefinitionCanonicalizer.withoutComments(rightDefinition, dialect);
             }
-            boolean compareCanonicalDefinitions = normalizeMySqlDefinition || ignoreComments || key.kind() == SchemaObject.Kind.TABLE;
+            boolean compareCanonicalDefinitions = (normalizeMySqlDefinition && (ignoreMySqlDefiner || ignoreMySqlEnvironmentQualifiers))
+                    || ignoreComments || key.kind() == SchemaObject.Kind.TABLE;
             boolean identical = a != null && b != null && (compareCanonicalDefinitions
                     ? SqlDefinitionCanonicalizer.signature(leftDefinition, dialect, key.kind() == SchemaObject.Kind.TABLE, ignoreAutoIncrement)
                         .equals(SqlDefinitionCanonicalizer.signature(rightDefinition, dialect, key.kind() == SchemaObject.Kind.TABLE, ignoreAutoIncrement))
@@ -59,11 +70,18 @@ public final class DiffEngine {
         return results;
     }
 
-    private static String displayDefinition(String definition, SchemaObject.Kind kind, boolean normalizeMySqlDefinition) {
+    private static String displayDefinition(String definition, SchemaObject.Kind kind, boolean normalizeMySqlDefinition,
+                                            boolean ignoreMySqlDefiner, boolean ignoreMySqlEnvironmentQualifiers) {
         if (!normalizeMySqlDefinition) return definition;
         return switch (kind) {
-            case VIEW, PROCEDURE, FUNCTION -> SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(definition);
-            case TRIGGER -> SqlDefinitionCanonicalizer.withoutMySqlTriggerDatabase(definition);
+            case VIEW, PROCEDURE, FUNCTION -> ignoreMySqlDefiner
+                    ? SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(definition) : definition;
+            case TRIGGER -> {
+                String normalized = ignoreMySqlDefiner
+                        ? SqlDefinitionCanonicalizer.withoutMySqlTriggerDefiner(definition) : definition;
+                yield ignoreMySqlEnvironmentQualifiers
+                        ? SqlDefinitionCanonicalizer.withoutMySqlTriggerDatabase(normalized) : normalized;
+            }
             default -> definition;
         };
     }

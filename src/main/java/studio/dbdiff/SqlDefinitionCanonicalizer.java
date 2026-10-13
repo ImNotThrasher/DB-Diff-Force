@@ -148,8 +148,13 @@ final class SqlDefinitionCanonicalizer {
     /** Removes the environment-specific database qualifier from a MySQL/MariaDB trigger name. */
     static String withoutMySqlTriggerDatabase(String sql) {
         if (sql == null || sql.isEmpty()) return sql;
-        String withoutDefiner = sql.replaceFirst("(?is)^(\\s*CREATE\\s+)DEFINER\\s*=\\s*[^\\s]+\\s+", "$1");
-        return withoutDefiner.replaceFirst("(?is)^(\\s*CREATE\\s+TRIGGER\\s+)(?:`(?:``|[^`])+`|[\\w$]+)\\s*\\.\\s*", "$1");
+        return sql.replaceFirst("(?is)^(\\s*CREATE\\s+(?:DEFINER\\s*=\\s*(?:`(?:``|[^`])*`@`(?:``|[^`])*`|[^\\s]+)\\s+)?TRIGGER\\s+)(?:`(?:``|[^`])+`|[\\w$]+)\\s*\\.\\s*", "$1");
+    }
+
+    /** Removes only a leading MySQL/MariaDB trigger DEFINER clause for comparison. */
+    static String withoutMySqlTriggerDefiner(String sql) {
+        if (sql == null || sql.isEmpty()) return sql;
+        return sql.replaceFirst("(?is)^(\\s*CREATE\\s+)DEFINER\\s*=\\s*(?:`(?:``|[^`])*`@`(?:``|[^`])*`|[^\\s]+)\\s+", "$1");
     }
 
     /** Blank ordinary comments while preserving line numbers and SQL token boundaries. */

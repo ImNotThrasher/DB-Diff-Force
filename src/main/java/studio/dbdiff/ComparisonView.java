@@ -10,11 +10,15 @@ import javax.swing.JTextField;
 import javax.swing.JTextArea;
 import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
+import javax.swing.UIManager;
+import javax.swing.border.CompoundBorder;
+import javax.swing.border.LineBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Color;
 import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
@@ -34,6 +38,9 @@ public final class ComparisonView extends JPanel {
     private final JLabel targetProfileBadge = new JLabel();
     private final JLabel modeNotice = new JLabel("Solo comparación de esquema");
     private final JTextArea summary = new JTextArea();
+    private final JLabel comparisonOptionsHeading = new JLabel("Exclusiones activas");
+    private final JPanel comparisonOptions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+    private JPanel comparisonOptionsNote;
     private final DiffCodeEditor source = new DiffCodeEditor(false, true);
     private final DiffCodeEditor target = new DiffCodeEditor(false, false);
     private final DiffCodeEditor unified = new DiffCodeEditor(true, true);
@@ -50,10 +57,15 @@ public final class ComparisonView extends JPanel {
     private int activeSearchMatch = -1;
     private DiffEngine.Result current;
     private boolean dark;
+    private boolean ignoreMySqlDefiner;
+    private boolean ignoreMySqlEnvironmentQualifiers;
+    private boolean ignoreComments;
+    private boolean ignoreAutoIncrement;
 
     public ComparisonView() {
         super(new BorderLayout(0, 8));
         add(headerPanel(), BorderLayout.NORTH);
+        add(comparisonOptionsNote, BorderLayout.SOUTH);
         JSplitPane definitions = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
                 titled(sourceHeading, source), titled(targetHeading, target));
         definitions.setResizeWeight(.5); definitions.setBorder(null); definitions.setDividerSize(7);
@@ -125,9 +137,19 @@ public final class ComparisonView extends JPanel {
         for (DiffCodeEditor editor : List.of(source, target, unified)) editor.setCodeFont(family, size);
     }
 
+    public void setComparisonOptions(boolean ignoreMySqlDefiner, boolean ignoreMySqlEnvironmentQualifiers,
+                                     boolean ignoreComments, boolean ignoreAutoIncrement) {
+        this.ignoreMySqlDefiner = ignoreMySqlDefiner;
+        this.ignoreMySqlEnvironmentQualifiers = ignoreMySqlEnvironmentQualifiers;
+        this.ignoreComments = ignoreComments;
+        this.ignoreAutoIncrement = ignoreAutoIncrement;
+        if (comparisonOptionsNote != null) updateComparisonOptions();
+    }
+
     public void showMessage(String text) {
         current = null;
         summary.setText("Comparación de esquema");
+        updateComparisonOptions();
         emptyMessage.setText(text == null || text.isBlank() ? "Seleccioná un objeto de la lista para ver su definición y sus diferencias." : text);
         source.clear(); target.clear(); unified.clear();
         ((CardLayout) cards.getLayout()).show(cards, EMPTY);
@@ -139,6 +161,7 @@ public final class ComparisonView extends JPanel {
         showMode(selectedMode);
         summary.setText(kindName(result.key().kind()) + " · " + result.key().qualifiedName()
                 + " · Estado: " + statusName(result.status()));
+        updateComparisonOptions();
         String left = result.source() == null ? "El objeto no existe en el origen." : result.source().definition();
         String right = result.target() == null ? "El objeto no existe en el destino." : result.target().definition();
         List<DiffEngine.DiffLine> sourceRows = result.diffLines().stream().filter(line -> line.sourceLineNumber() != null).toList();
@@ -165,6 +188,11 @@ public final class ComparisonView extends JPanel {
         endpoints.add(endpointPanel("Destino", targetEndpoint, targetProfileBadge), endpoint);
         summary.setRows(1); summary.setEditable(false); summary.setLineWrap(true); summary.setWrapStyleWord(true);
         summary.setOpaque(false); summary.setFont(javax.swing.UIManager.getFont("Label.font")); summary.setBorder(null);
+        comparisonOptionsHeading.setFont(javax.swing.UIManager.getFont("Label.font").deriveFont(Font.BOLD));
+        comparisonOptionsHeading.setForeground(javax.swing.UIManager.getColor("Label.foreground"));
+        comparisonOptions.setOpaque(false);
+        comparisonOptionsNote = InfoNote.wrap(comparisonOptions, UIManager.getColor("Component.focusColor"));
+        comparisonOptionsNote.setVisible(false);
         labels.add(endpoints, BorderLayout.CENTER);
         modeNoticeBlock = InfoNote.wrap(modeNotice);
         modeNoticeBlock.setVisible(false);
@@ -206,8 +234,38 @@ public final class ComparisonView extends JPanel {
         JPanel objectBar = new JPanel(new BorderLayout(8, 0));
         objectBar.setBorder(new EmptyBorder(0, 0, 8, 0));
         objectBar.add(summary, BorderLayout.CENTER); objectBar.add(choices, BorderLayout.EAST);
-        panel.setBorder(new EmptyBorder(2, 4, 4, 4)); panel.add(labels, BorderLayout.NORTH); panel.add(objectBar, BorderLayout.CENTER);
+        panel.setBorder(new EmptyBorder(2, 4, 4, 4));
+        panel.add(labels, BorderLayout.NORTH);
+        panel.add(objectBar, BorderLayout.CENTER);
         return panel;
+    }
+
+    private void updateComparisonOptions() {
+        List<String> active = new ArrayList<>();
+        if (ignoreMySqlDefiner) active.add("DEFINER");
+        if (ignoreMySqlEnvironmentQualifiers) active.add("calificador de base de los triggers");
+        if (ignoreComments) active.add("comentarios");
+        if (ignoreAutoIncrement) active.add("contador AUTO_INCREMENT");
+        comparisonOptions.removeAll();
+        if (!active.isEmpty()) {
+            comparisonOptions.add(comparisonOptionsHeading);
+            active.forEach(option -> comparisonOptions.add(optionChip(option)));
+        }
+        comparisonOptionsNote.setVisible(!active.isEmpty());
+        revalidate();
+    }
+
+    private static JLabel optionChip(String text) {
+        JLabel chip = new JLabel(text);
+        chip.setFont(UIManager.getFont("Label.font").deriveFont(Font.PLAIN, UIManager.getFont("Label.font").getSize2D() - 1f));
+        chip.setForeground(UIManager.getColor("Label.foreground"));
+        chip.setOpaque(true);
+        Color background = UIManager.getColor("Panel.background");
+        chip.setBackground(background != null ? background : UIManager.getColor("Label.background"));
+        Color border = UIManager.getColor("Component.borderColor");
+        chip.setBorder(new CompoundBorder(new LineBorder(border != null ? border : UIManager.getColor("Label.foreground"), 1, true),
+                new EmptyBorder(2, 7, 2, 7)));
+        return chip;
     }
 
     private static JPanel endpointPanel(String title, JLabel value, JLabel profileBadge) {

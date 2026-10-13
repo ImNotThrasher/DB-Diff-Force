@@ -153,6 +153,36 @@ class SqlDefinitionCanonicalizerTest {
     }
 
     @Test
+    void mysqlTriggerDefinerAndDatabaseQualifierCanBeIgnoredIndependently() {
+        String source = "CREATE DEFINER=`dev`@`%` TRIGGER sistemadb_dev.audit AFTER DELETE ON actas FOR EACH ROW INSERT INTO logs VALUES (OLD.id)";
+        String changedDefiner = source.replace("`dev`", "`qa`");
+        String changedDatabase = source.replace("sistemadb_dev", "sistemadb_qa");
+        SchemaObject.Key key = new SchemaObject.Key(SchemaObject.Kind.TRIGGER, "audit", "");
+        SchemaObject left = new SchemaObject(key, source, mysql(source, false));
+
+        DiffEngine.Result definerOnly = compareTrigger(left,
+                new SchemaObject(key, changedDefiner, mysql(changedDefiner, false)), true, false);
+        DiffEngine.Result qualifierOnly = compareTrigger(left,
+                new SchemaObject(key, changedDatabase, mysql(changedDatabase, false)), false, true);
+        DiffEngine.Result definerStillSignificant = compareTrigger(left,
+                new SchemaObject(key, changedDefiner, mysql(changedDefiner, false)), false, true);
+        DiffEngine.Result qualifierStillSignificant = compareTrigger(left,
+                new SchemaObject(key, changedDatabase, mysql(changedDatabase, false)), true, false);
+
+        assertEquals(DiffEngine.Status.IDENTICAL, definerOnly.status());
+        assertEquals(DiffEngine.Status.IDENTICAL, qualifierOnly.status());
+        assertEquals(DiffEngine.Status.CHANGED, definerStillSignificant.status());
+        assertEquals(DiffEngine.Status.CHANGED, qualifierStillSignificant.status());
+    }
+
+    private static DiffEngine.Result compareTrigger(SchemaObject source, SchemaObject target,
+                                                    boolean ignoreDefiner, boolean ignoreEnvironmentQualifier) {
+        return new DiffEngine().compare(List.of(source), List.of(target),
+                java.util.EnumSet.of(SchemaObject.Kind.TRIGGER), java.util.Set.of(source.key()),
+                ignoreDefiner, ignoreEnvironmentQualifier, false, true, DatabaseEngine.MARIADB).get(0);
+    }
+
+    @Test
     void canIgnoreMysqlRoutineDefinerWithoutChangingParametersOrBody() {
         String source = "CREATE DEFINER=`sistemausr_dev`@`%` PROCEDURE `sp_validar_periodo_campania`(periodoCampania int,idEstablecimiento bigint) BEGIN SELECT periodoCampania; END";
         String target = source.replace("sistemausr_dev", "sistemausr_qa");
