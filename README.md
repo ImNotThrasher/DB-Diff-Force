@@ -43,6 +43,8 @@ Para reconstruir el esquema de migraciones Flyway, elegí **Migraciones Flyway**
 
 Al conectar, la lista de objetos queda marcada como **sin comparar** hasta que se ejecute el análisis. Usá Ctrl+clic o Mayús+clic para seleccionar objetos. **Comparar** analiza los objetos seleccionados; si no seleccionás ninguno, analiza todos los tipos habilitados. Para comparar filas, seleccioná una tabla que ya se haya comparado. **Exportar esquema** genera SQL solo para los resultados seleccionados; si no seleccionaste ninguno, la aplicación te pide que elijas en vez de exportarlo todo.
 
+En **Configuración** podés ajustar exclusiones para la comparación de definiciones. **Ignorar DEFINER y calificadores de entorno** omite el usuario `DEFINER` en vistas, procedimientos y funciones MySQL/MariaDB, y también el `DEFINER` y la base que califica el nombre de los triggers; no oculta cambios en parámetros ni en el cuerpo SQL. **Ignorar comentarios** excluye comentarios comunes del estado y del resaltado de diferencias, pero conserva los comentarios dentro de literales y los comentarios ejecutables o hints. **Ignorar contador AUTO_INCREMENT** omite el valor actual de la secuencia de cualquier tabla; la columna autoincremental, la clave primaria y las demás opciones de tabla se siguen comparando. Estas preferencias se guardan en el equipo. Ignorar el `DEFINER` y los comentarios está desactivado inicialmente; ignorar el contador `AUTO_INCREMENT` está activado inicialmente.
+
 ## Capturas
 
 ### Nueva comparación
