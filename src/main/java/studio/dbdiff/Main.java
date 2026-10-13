@@ -82,6 +82,7 @@ public final class Main {
     private boolean keepRowComparisonExpanded;
     private boolean rememberLastComparison;
     private boolean ignoreMySqlViewDefiner;
+    private boolean ignoreComments;
     private JPanel headerPanel, leftPanel;
     private JSplitPane workspaceSplit;
     private JSplitPane comparisonSplit;
@@ -402,7 +403,7 @@ public final class Main {
                 List<SchemaObject> a = loadSelected(sourceConnector, sourceCatalog, kinds, selectedKeys, sourceCache, progress, current);
                 List<SchemaObject> b = loadSelected(targetConnector, targetCatalog, kinds, selectedKeys, targetCache, progress, current);
                 ensureComparisonCurrent(request);
-                List<DiffEngine.Result> results = new DiffEngine().compare(a, b, kinds, selectedKeys, ignoreMySqlViewDefiner);
+                List<DiffEngine.Result> results = new DiffEngine().compare(a, b, kinds, selectedKeys, ignoreMySqlViewDefiner, ignoreComments, schemaEngine);
                 SwingUtilities.invokeLater(() -> {
                     if (request != comparisonRequest) return;
                     schemaComparisonRunning = false;
@@ -808,7 +809,7 @@ public final class Main {
 
     private DiffEngine.Result compareLoadedObject(SchemaObject.Key key, SchemaObject source, SchemaObject target) {
         return new DiffEngine().compare(source == null ? List.of() : List.of(source), target == null ? List.of() : List.of(target),
-                EnumSet.of(key.kind()), Set.of(key), ignoreMySqlViewDefiner).get(0);
+                EnumSet.of(key.kind()), Set.of(key), ignoreMySqlViewDefiner, ignoreComments, schemaEngine).get(0);
     }
 
     private static SchemaObject findObject(List<SchemaObject> objects, SchemaObject.Key key) {
@@ -1031,6 +1032,7 @@ public final class Main {
             keepRowComparisonExpanded = Boolean.parseBoolean(values.getProperty("keepRowComparisonExpanded", "false"));
             rememberLastComparison = Boolean.parseBoolean(values.getProperty("rememberLastComparison", "false"));
             ignoreMySqlViewDefiner = Boolean.parseBoolean(values.getProperty("ignoreMySqlViewDefiner", "false"));
+            ignoreComments = Boolean.parseBoolean(values.getProperty("ignoreComments", "false"));
             try { codeFontSize = Math.clamp(Integer.parseInt(values.getProperty("codeFontSize", "13")), 10, 24); }
             catch (NumberFormatException ignored) { codeFontSize = 13; }
         } catch (IOException ignored) { }
@@ -1040,6 +1042,7 @@ public final class Main {
         try {
             Files.createDirectories(UI_PREFERENCES.getParent());
             java.util.Properties values = new java.util.Properties(); values.setProperty("theme", theme); values.setProperty("stackedLayout", Boolean.toString(stackedLayout)); values.setProperty("codeFontSize", Integer.toString(codeFontSize)); values.setProperty("codeFontFamily", codeFontFamily); values.setProperty("rememberWindowBounds", Boolean.toString(rememberWindowBounds)); values.setProperty("startMaximized", Boolean.toString(startMaximized)); values.setProperty("keepRowComparisonExpanded", Boolean.toString(keepRowComparisonExpanded)); values.setProperty("rememberLastComparison", Boolean.toString(rememberLastComparison)); values.setProperty("ignoreMySqlViewDefiner", Boolean.toString(ignoreMySqlViewDefiner));
+            values.setProperty("ignoreComments", Boolean.toString(ignoreComments));
             try (var output = Files.newOutputStream(UI_PREFERENCES)) { values.store(output, AppInfo.NAME + " appearance"); }
         } catch (IOException ex) { connectionStatus.setText("No se pudo guardar la apariencia: " + ex.getMessage()); }
     }
@@ -1055,14 +1058,16 @@ public final class Main {
 
     private void showSettings() {
         SettingsDialog.Selection selected = SettingsDialog.show(frame, theme, codeFontFamily, codeFontSize, rememberWindowBounds, startMaximized,
-                stackedLayout, keepRowComparisonExpanded, rememberLastComparison, ignoreMySqlViewDefiner);
+                stackedLayout, keepRowComparisonExpanded, rememberLastComparison, ignoreMySqlViewDefiner, ignoreComments);
         if (selected == null) return;
         theme = selected.theme(); codeFontFamily = selected.fontFamily(); codeFontSize = selected.fontSize();
         rememberWindowBounds = selected.rememberWindowBounds(); startMaximized = selected.startMaximized();
         stackedLayout = selected.stackedLayout(); keepRowComparisonExpanded = selected.keepRowComparisonExpanded();
         rememberLastComparison = selected.rememberLastComparison();
-        boolean comparisonOptionChanged = ignoreMySqlViewDefiner != selected.ignoreMySqlViewDefiner();
+        boolean comparisonOptionChanged = ignoreMySqlViewDefiner != selected.ignoreMySqlViewDefiner()
+                || ignoreComments != selected.ignoreComments();
         ignoreMySqlViewDefiner = selected.ignoreMySqlViewDefiner();
+        ignoreComments = selected.ignoreComments();
         updateLayout();
         saveUiPreferences(); applyTheme();
         if (comparisonOptionChanged && currentSelection != null) compare(true);
@@ -1107,6 +1112,7 @@ public final class Main {
             values.setProperty("windowX", Integer.toString(bounds.x)); values.setProperty("windowY", Integer.toString(bounds.y));
             values.setProperty("windowWidth", Integer.toString(bounds.width)); values.setProperty("windowHeight", Integer.toString(bounds.height));
             Files.createDirectories(UI_PREFERENCES.getParent());
+            values.setProperty("ignoreComments", Boolean.toString(ignoreComments));
             try (var output = Files.newOutputStream(UI_PREFERENCES)) { values.store(output, AppInfo.NAME + " appearance"); }
         } catch (IOException ignored) { }
     }

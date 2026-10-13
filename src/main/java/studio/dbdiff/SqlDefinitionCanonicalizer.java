@@ -147,6 +147,26 @@ final class SqlDefinitionCanonicalizer {
         return withoutDefiner.replaceFirst("(?is)^(\\s*CREATE\\s+TRIGGER\\s+)(?:`(?:``|[^`])+`|[\\w$]+)\\s*\\.\\s*", "$1");
     }
 
+    /** Blank ordinary comments while preserving line numbers and SQL token boundaries. */
+    static String withoutComments(String sql, Dialect dialect) {
+        StringBuilder result = new StringBuilder(sql);
+        for (int cursor = 0; cursor < sql.length();) {
+            int end = commentEnd(sql, cursor, dialect);
+            if (end > cursor) {
+                // Executable comments and optimizer hints can affect behavior.
+                boolean significant = sql.startsWith("/*!", cursor) || sql.startsWith("/*M!", cursor)
+                        || sql.startsWith("/*+", cursor) || sql.startsWith("-- " + AppInfo.NAME + ":", cursor);
+                if (!significant) for (int i = cursor; i < end; i++) {
+                    if (sql.charAt(i) != '\n' && sql.charAt(i) != '\r') result.setCharAt(i, ' ');
+                }
+                cursor = end;
+            } else if (isQuoted(sql.charAt(cursor), dialect)) {
+                cursor = quotedEnd(sql, cursor, sql.charAt(cursor), dialect);
+            } else cursor++;
+        }
+        return result.toString();
+    }
+
     // Typed, length-prefixed tokens keep boundaries unambiguous after whitespace is discarded.
     private static void appendToken(StringBuilder output, char type, String value) {
         output.append(type).append(value.length()).append(':').append(value).append(';');

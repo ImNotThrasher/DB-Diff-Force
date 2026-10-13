@@ -9,12 +9,12 @@ import java.nio.file.Path;
 final class SettingsDialog {
     record Selection(String theme, String fontFamily, int fontSize, boolean rememberWindowBounds, boolean startMaximized,
                      boolean stackedLayout, boolean keepRowComparisonExpanded, boolean rememberLastComparison,
-                     boolean ignoreMySqlViewDefiner) { }
+                     boolean ignoreMySqlViewDefiner, boolean ignoreComments) { }
     private static final String AUTOMATIC = "Automática (JetBrains Mono / Consolas)";
 
     static Selection show(JFrame owner, String theme, String family, int size, boolean rememberBounds, boolean maximized,
                           boolean stackedLayout, boolean keepRowComparisonExpanded, boolean rememberLastComparison,
-                          boolean ignoreMySqlViewDefiner) {
+                          boolean ignoreMySqlViewDefiner, boolean ignoreComments) {
         JComboBox<String> themes = new JComboBox<>(new String[]{"Sistema", "Claro", "Oscuro"});
         themes.setMaximumRowCount(3);
         themes.setPreferredSize(new Dimension(220, themes.getPreferredSize().height));
@@ -42,9 +42,11 @@ final class SettingsDialog {
         JCheckBox rememberLast = new JCheckBox("Recordar y reconectar la última comparación al iniciar", rememberLastComparison);
         JCheckBox ignoreDefiner = new JCheckBox("Ignorar DEFINER en vistas MySQL/MariaDB al comparar", ignoreMySqlViewDefiner);
         ignoreDefiner.setToolTipText("Solo afecta si una vista aparece como cambiada; el SQL original se conserva para mostrar y exportar.");
+        JCheckBox ignoreCommentsChoice = new JCheckBox("Ignorar comentarios al comparar SQL", ignoreComments);
+        ignoreCommentsChoice.setToolTipText("Conserva el SQL original y los comentarios ejecutables; ignora solo comentarios comunes.");
         rememberLast.setToolTipText("Guarda servidores, bases y carpeta de origen, nunca las contraseñas. La reconexión automática requiere credenciales guardadas en el almacén seguro del sistema.");
         JPanel windowChoices = new JPanel(new GridLayout(0, 1, 0, 6));
-        windowChoices.add(remember); windowChoices.add(startMaximizedChoice); windowChoices.add(stacked); windowChoices.add(keepRowsExpanded); windowChoices.add(rememberLast); windowChoices.add(ignoreDefiner);
+        windowChoices.add(remember); windowChoices.add(startMaximizedChoice); windowChoices.add(stacked); windowChoices.add(keepRowsExpanded); windowChoices.add(rememberLast); windowChoices.add(ignoreDefiner); windowChoices.add(ignoreCommentsChoice);
         window.add(windowChoices, BorderLayout.CENTER);
         JPanel code = section("Código");
         JPanel choices = new JPanel(new GridLayout(0, 1, 0, 6));
@@ -65,9 +67,9 @@ final class SettingsDialog {
                 + "\nContraseñas: almacén seguro del sistema operativo.");
         storage.setRows(3);
         form.add(ReviewDialog.disclosure("Almacenamiento", storage), BorderLayout.SOUTH);
-        if (!ReviewDialog.confirm(owner, "Configuración", form, new Dimension(720, 700), "Guardar")) return null;
+        if (!ReviewDialog.confirm(owner, "Configuración", form, new Dimension(720, 740), "Guardar")) return null;
         return new Selection((String) themes.getSelectedItem(), fontFamily(fonts), (Integer) sizes.getValue(), remember.isSelected(),
-                startMaximizedChoice.isSelected(), !stacked.isSelected(), keepRowsExpanded.isSelected(), rememberLast.isSelected(), ignoreDefiner.isSelected());
+                startMaximizedChoice.isSelected(), !stacked.isSelected(), keepRowsExpanded.isSelected(), rememberLast.isSelected(), ignoreDefiner.isSelected(), ignoreCommentsChoice.isSelected());
     }
 
     private static String fontFamily(JComboBox<String> fonts) {
