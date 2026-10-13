@@ -65,7 +65,8 @@ final class RowComparisonMessages {
     }
 
     static String truncated(int maxChanges) {
-        return "Solo se conservaron los primeros " + maxChanges + " cambios de fila; la exportación se limita a esos registros.";
+        return "Se revisaron todas las claves, pero solo se conservaron las primeras " + maxChanges
+                + " filas para la vista y la exportación.";
     }
 
     static String rowCountUnavailable(String table) {

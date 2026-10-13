@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SqlExporterTest {
@@ -29,6 +30,22 @@ class SqlExporterTest {
 
         assertTrue(sql.indexOf("CREATE TABLE `parent`") < sql.indexOf("CREATE VIEW `parent_view`"));
         assertTrue(sql.indexOf("CREATE TABLE `parent`") < sql.indexOf("CREATE TRIGGER `parent_audit`"));
+    }
+
+    @Test
+    void changedMysqlViewExportOmitsSourceDefiner() {
+        SchemaObject.Key viewKey = key(SchemaObject.Kind.VIEW, "parent_view");
+        String sourceDdl = "CREATE ALGORITHM=UNDEFINED DEFINER=`sistemausr_dev`@`%` SQL SECURITY DEFINER VIEW `parent_view` AS SELECT 2";
+        String targetDdl = "CREATE ALGORITHM=UNDEFINED DEFINER=`sistemausr_qa`@`%` SQL SECURITY DEFINER VIEW `parent_view` AS SELECT 1";
+        DiffEngine.Result changed = new DiffEngine.Result(viewKey, DiffEngine.Status.CHANGED,
+                object(viewKey, sourceDdl), object(viewKey, targetDdl), List.of());
+
+        String sql = SqlExporter.export(List.of(changed), Set.of(DiffEngine.Status.CHANGED), "target_db",
+                false, false, SqlExporter.Strategy.ALTER, DatabaseEngine.MARIADB);
+
+        assertTrue(sql.contains("CREATE OR REPLACE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW"));
+        assertFalse(sql.contains("sistemausr_dev"));
+        assertFalse(sql.contains("sistemausr_qa"));
     }
 
     @Test

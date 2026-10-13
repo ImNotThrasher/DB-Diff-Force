@@ -70,6 +70,10 @@ final class SqlDefinitionCanonicalizer {
 
     /** Ignores SQL formatting and keyword case, preserving identifiers, literals, and comments. */
     static String signature(String sql, Dialect dialect, boolean tableDefinition) {
+        return signature(sql, dialect, tableDefinition, true);
+    }
+
+    static String signature(String sql, Dialect dialect, boolean tableDefinition, boolean ignoreAutoIncrement) {
         if (sql == null || sql.isEmpty()) return "";
         Set<String> keywords = dialect == Dialect.MYSQL ? MYSQL_KEYWORDS : SQL_SERVER_KEYWORDS;
         StringBuilder result = new StringBuilder(sql.length());
@@ -112,10 +116,11 @@ final class SqlDefinitionCanonicalizer {
                     cursor = prefixedStringEnd;
                     continue;
                 }
-                if (tableDefinition && word.equalsIgnoreCase("AUTO_INCREMENT")) {
+                if (tableDefinition && ignoreAutoIncrement && word.equalsIgnoreCase("AUTO_INCREMENT")) {
                     int metadataEnd = autoIncrementEnd(sql, end);
                     if (metadataEnd > end) {
-                        appendToken(result, 'M', "AUTO_INCREMENT=<value>");
+                        // This is table state, not schema: it may be present on
+                        // one server and absent on another after a dump/restore.
                         cursor = metadataEnd;
                         continue;
                     }
@@ -130,6 +135,44 @@ final class SqlDefinitionCanonicalizer {
             String operator = operatorAt(sql, cursor);
             appendToken(result, 'O', operator);
             cursor += operator.length();
+        }
+        return result.toString();
+    }
+
+    /** Removes only a leading MySQL/MariaDB view DEFINER clause for comparison. */
+    static String withoutMySqlViewDefiner(String sql) {
+        if (sql == null || sql.isEmpty()) return sql;
+        return sql.replaceFirst("(?is)^(\\s*CREATE\\s+(?:(?:OR\\s+REPLACE)\\s+)?(?:ALGORITHM\\s*=\\s*\\w+\\s+)?)(?:DEFINER\\s*=\\s*[^\\s]+\\s+)", "$1");
+    }
+
+    /** Removes the environment-specific database qualifier from a MySQL/MariaDB trigger name. */
+    static String withoutMySqlTriggerDatabase(String sql) {
+        if (sql == null || sql.isEmpty()) return sql;
+        return sql.replaceFirst("(?is)^(\\s*CREATE\\s+(?:DEFINER\\s*=\\s*(?:`(?:``|[^`])*`@`(?:``|[^`])*`|[^\\s]+)\\s+)?TRIGGER\\s+)(?:`(?:``|[^`])+`|[\\w$]+)\\s*\\.\\s*", "$1");
+    }
+
+    /** Removes only a leading MySQL/MariaDB trigger DEFINER clause for comparison. */
+    static String withoutMySqlTriggerDefiner(String sql) {
+        if (sql == null || sql.isEmpty()) return sql;
+        return sql.replaceFirst("(?is)^(\\s*CREATE\\s+)DEFINER\\s*=\\s*(?:`(?:``|[^`])*`@`(?:``|[^`])*`|[^\\s]+)\\s+", "$1");
+    }
+
+    /** Blank ordinary comments while preserving line numbers and SQL token boundaries. */
+    static String withoutComments(String sql, Dialect dialect) {
+        StringBuilder result = new StringBuilder(sql);
+        for (int cursor = 0; cursor < sql.length();) {
+            int end = commentEnd(sql, cursor, dialect);
+            if (end > cursor) {
+                // Executable comments and optimizer hints can affect behavior.
+                boolean significant = sql.startsWith("/*!", cursor) || sql.startsWith("/*M!", cursor)
+                        || sql.startsWith("/*+", cursor) || sql.startsWith("-- " + AppInfo.NAME + ":", cursor);
+                if (!significant) for (int i = cursor; i < end; i++) {
+                    if (sql.charAt(i) != '\n' && sql.charAt(i) != '\r') result.setCharAt(i, ' ');
+                }
+                cursor = end;
+            } else if (isQuoted(sql.charAt(cursor), dialect)) {
+                cursor = quotedEnd(sql, cursor, sql.charAt(cursor), dialect);
+            } else cursor++;
         }
         return result.toString();
     }

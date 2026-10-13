@@ -79,6 +79,13 @@ class SqlDefinitionCanonicalizerTest {
         assertSameMysql("CREATE TABLE `t` (`id` INT) AUTO_INCREMENT=12",
                 "create table `t` (`id` int) auto_increment = 987", true);
         assertDifferentMysql("SELECT 'AUTO_INCREMENT=12'", "select 'AUTO_INCREMENT=987'", true);
+        for (String table : List.of("taxonomia_nops", "actas", "unidad_determinaciones")) {
+            String source = "CREATE TABLE `" + table + "` (`id` int NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`)) ENGINE=InnoDB AUTO_INCREMENT=831 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+            String target = source.replace(" AUTO_INCREMENT=831", "");
+            assertSameMysql(source, target, true);
+            assertNotEquals(SqlDefinitionCanonicalizer.signature(source, SqlDefinitionCanonicalizer.Dialect.MYSQL, true, false),
+                    SqlDefinitionCanonicalizer.signature(target, SqlDefinitionCanonicalizer.Dialect.MYSQL, true, false));
+        }
     }
 
     @Test
@@ -97,6 +104,101 @@ class SqlDefinitionCanonicalizerTest {
         assertEquals(DiffEngine.Status.IDENTICAL, result.status());
         assertEquals(original, result.source().definition());
         assertEquals(formatted, result.target().definition());
+    }
+
+    @Test
+    void canIgnoreMysqlViewDefinerWithoutChangingDisplayedDefinitions() {
+        String source = "CREATE ALGORITHM=UNDEFINED DEFINER=`sistemausr_dev`@`%` SQL SECURITY DEFINER VIEW `vista_tecnica_seguimiento` AS SELECT 1";
+        String target = source.replace("sistemausr_dev", "sistemausr_qa");
+        SchemaObject.Key key = new SchemaObject.Key(SchemaObject.Kind.VIEW, "vista_tecnica_seguimiento", "");
+        SchemaObject left = new SchemaObject(key, source, mysql(source, false));
+        SchemaObject right = new SchemaObject(key, target, mysql(target, false));
+
+        DiffEngine.Result defaultResult = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.VIEW), java.util.Set.of(key)).get(0);
+        DiffEngine.Result ignoredResult = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.VIEW), java.util.Set.of(key), true).get(0);
+
+        assertEquals(DiffEngine.Status.CHANGED, defaultResult.status());
+        assertEquals(DiffEngine.Status.IDENTICAL, ignoredResult.status());
+        assertEquals(source, ignoredResult.source().definition());
+        assertEquals(target, ignoredResult.target().definition());
+    }
+
+    @Test
+    void definerExclusionOnlyRemovesLeadingDefinerClause() {
+        String ddl = "CREATE DEFINER=`user`@`%` VIEW v AS SELECT 'DEFINER=user'";
+        assertEquals("CREATE VIEW v AS SELECT 'DEFINER=user'", SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(ddl));
+    }
+
+    @Test
+    void canIgnoreMysqlTriggerDatabaseQualifierButKeepsTriggerBodySignificant() {
+        String source = "CREATE DEFINER=`dev`@`%` TRIGGER sistemadb_dev.acta_delete_logs AFTER DELETE ON actas FOR EACH ROW INSERT INTO logs VALUES (OLD.id)";
+        String target = source.replace("sistemadb_dev", "sistemadb_qa");
+        SchemaObject.Key key = new SchemaObject.Key(SchemaObject.Kind.TRIGGER, "acta_delete_logs", "");
+        SchemaObject left = new SchemaObject(key, source, mysql(source, false));
+        SchemaObject right = new SchemaObject(key, target, mysql(target, false));
+
+        DiffEngine.Result defaultResult = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.TRIGGER), java.util.Set.of(key)).get(0);
+        DiffEngine.Result ignoredResult = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.TRIGGER), java.util.Set.of(key), true).get(0);
+
+        assertEquals(DiffEngine.Status.CHANGED, defaultResult.status());
+        assertEquals(DiffEngine.Status.IDENTICAL, ignoredResult.status());
+        SchemaObject changedBody = new SchemaObject(key, target.replace("OLD.id", "OLD.other_id"), mysql(target, false));
+        DiffEngine.Result bodyChange = new DiffEngine().compare(List.of(left), List.of(changedBody),
+                java.util.EnumSet.of(SchemaObject.Kind.TRIGGER), java.util.Set.of(key), true).get(0);
+        assertEquals(DiffEngine.Status.CHANGED, bodyChange.status());
+    }
+
+    @Test
+    void mysqlTriggerDefinerAndDatabaseQualifierCanBeIgnoredIndependently() {
+        String source = "CREATE DEFINER=`dev`@`%` TRIGGER sistemadb_dev.audit AFTER DELETE ON actas FOR EACH ROW INSERT INTO logs VALUES (OLD.id)";
+        String changedDefiner = source.replace("`dev`", "`qa`");
+        String changedDatabase = source.replace("sistemadb_dev", "sistemadb_qa");
+        SchemaObject.Key key = new SchemaObject.Key(SchemaObject.Kind.TRIGGER, "audit", "");
+        SchemaObject left = new SchemaObject(key, source, mysql(source, false));
+
+        DiffEngine.Result definerOnly = compareTrigger(left,
+                new SchemaObject(key, changedDefiner, mysql(changedDefiner, false)), true, false);
+        DiffEngine.Result qualifierOnly = compareTrigger(left,
+                new SchemaObject(key, changedDatabase, mysql(changedDatabase, false)), false, true);
+        DiffEngine.Result definerStillSignificant = compareTrigger(left,
+                new SchemaObject(key, changedDefiner, mysql(changedDefiner, false)), false, true);
+        DiffEngine.Result qualifierStillSignificant = compareTrigger(left,
+                new SchemaObject(key, changedDatabase, mysql(changedDatabase, false)), true, false);
+
+        assertEquals(DiffEngine.Status.IDENTICAL, definerOnly.status());
+        assertEquals(DiffEngine.Status.IDENTICAL, qualifierOnly.status());
+        assertEquals(DiffEngine.Status.CHANGED, definerStillSignificant.status());
+        assertEquals(DiffEngine.Status.CHANGED, qualifierStillSignificant.status());
+    }
+
+    private static DiffEngine.Result compareTrigger(SchemaObject source, SchemaObject target,
+                                                    boolean ignoreDefiner, boolean ignoreEnvironmentQualifier) {
+        return new DiffEngine().compare(List.of(source), List.of(target),
+                java.util.EnumSet.of(SchemaObject.Kind.TRIGGER), java.util.Set.of(source.key()),
+                ignoreDefiner, ignoreEnvironmentQualifier, false, true, DatabaseEngine.MARIADB).get(0);
+    }
+
+    @Test
+    void canIgnoreMysqlRoutineDefinerWithoutChangingParametersOrBody() {
+        String source = "CREATE DEFINER=`sistemausr_dev`@`%` PROCEDURE `sp_validar_periodo_campania`(periodoCampania int,idEstablecimiento bigint) BEGIN SELECT periodoCampania; END";
+        String target = source.replace("sistemausr_dev", "sistemausr_qa");
+        SchemaObject.Key key = new SchemaObject.Key(SchemaObject.Kind.PROCEDURE, "sp_validar_periodo_campania", "");
+        SchemaObject left = new SchemaObject(key, source, mysql(source, false));
+        SchemaObject right = new SchemaObject(key, target, mysql(target, false));
+
+        DiffEngine.Result ignoredDefiner = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.PROCEDURE), java.util.Set.of(key), true).get(0);
+        assertEquals(DiffEngine.Status.IDENTICAL, ignoredDefiner.status());
+
+        SchemaObject changedParameters = new SchemaObject(key,
+                target.replace("idEstablecimiento bigint", "idEstablecimiento int"), mysql(target, false));
+        DiffEngine.Result parameterChange = new DiffEngine().compare(List.of(left), List.of(changedParameters),
+                java.util.EnumSet.of(SchemaObject.Kind.PROCEDURE), java.util.Set.of(key), true).get(0);
+        assertEquals(DiffEngine.Status.CHANGED, parameterChange.status());
     }
 
     private static void assertSameMysql(String left, String right, boolean table) {

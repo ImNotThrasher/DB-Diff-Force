@@ -9,19 +9,81 @@ public final class DiffEngine {
     public record Result(SchemaObject.Key key, Status status, SchemaObject source, SchemaObject target, List<DiffLine> diffLines) { }
 
     public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds, Set<SchemaObject.Key> selected) {
+        return compare(source, target, kinds, selected, false);
+    }
+
+    public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds,
+                                Set<SchemaObject.Key> selected, boolean ignoreMySqlViewDefiner) {
+        return compare(source, target, kinds, selected, ignoreMySqlViewDefiner, false, true, DatabaseEngine.MARIADB);
+    }
+
+    public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds,
+                                Set<SchemaObject.Key> selected, boolean ignoreMySqlViewDefiner,
+                                boolean ignoreComments, boolean ignoreAutoIncrement, DatabaseEngine engine) {
+        return compare(source, target, kinds, selected, ignoreMySqlViewDefiner, ignoreMySqlViewDefiner,
+                ignoreComments, ignoreAutoIncrement, engine);
+    }
+
+    public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds,
+                                Set<SchemaObject.Key> selected, boolean ignoreMySqlDefiner,
+                                boolean ignoreMySqlEnvironmentQualifiers, boolean ignoreComments,
+                                boolean ignoreAutoIncrement, DatabaseEngine engine) {
+        var dialect = engine == DatabaseEngine.SQLSERVER ? SqlDefinitionCanonicalizer.Dialect.SQL_SERVER
+                : SqlDefinitionCanonicalizer.Dialect.MYSQL;
         Map<SchemaObject.Key, SchemaObject> left = index(source), right = index(target);
         TreeSet<SchemaObject.Key> keys = new TreeSet<>(); keys.addAll(left.keySet()); keys.addAll(right.keySet());
         List<Result> results = new ArrayList<>();
         for (SchemaObject.Key key : keys) {
             if (!kinds.contains(key.kind()) || (!selected.isEmpty() && !selected.contains(key))) continue;
             SchemaObject a = left.get(key), b = right.get(key);
-            Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : a.signature().equals(b.signature()) ? Status.IDENTICAL : Status.CHANGED;
+            boolean normalizeMySqlDefinition = engine != DatabaseEngine.SQLSERVER
+                    && (key.kind() == SchemaObject.Kind.VIEW || key.kind() == SchemaObject.Kind.TRIGGER
+                        || key.kind() == SchemaObject.Kind.PROCEDURE || key.kind() == SchemaObject.Kind.FUNCTION);
+            String leftDefinition = a == null ? "" : displayDefinition(a.definition(), key.kind(), normalizeMySqlDefinition,
+                    ignoreMySqlDefiner, ignoreMySqlEnvironmentQualifiers);
+            String rightDefinition = b == null ? "" : displayDefinition(b.definition(), key.kind(), normalizeMySqlDefinition,
+                    ignoreMySqlDefiner, ignoreMySqlEnvironmentQualifiers);
+            if (ignoreComments) {
+                leftDefinition = SqlDefinitionCanonicalizer.withoutComments(leftDefinition, dialect);
+                rightDefinition = SqlDefinitionCanonicalizer.withoutComments(rightDefinition, dialect);
+            }
+            boolean compareCanonicalDefinitions = (normalizeMySqlDefinition && (ignoreMySqlDefiner || ignoreMySqlEnvironmentQualifiers))
+                    || ignoreComments || key.kind() == SchemaObject.Kind.TABLE;
+            boolean identical = a != null && b != null && (compareCanonicalDefinitions
+                    ? SqlDefinitionCanonicalizer.signature(leftDefinition, dialect, key.kind() == SchemaObject.Kind.TABLE, ignoreAutoIncrement)
+                        .equals(SqlDefinitionCanonicalizer.signature(rightDefinition, dialect, key.kind() == SchemaObject.Kind.TABLE, ignoreAutoIncrement))
+                    : a.signature().equals(b.signature()));
+            Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : identical ? Status.IDENTICAL : Status.CHANGED;
             List<DiffLine> diff = a != null && b != null
-                    ? status == Status.IDENTICAL ? equivalentLines(a.definition(), b.definition()) : unified(a.definition(), b.definition())
+                    ? status == Status.IDENTICAL ? equivalentLines(a.definition(), b.definition())
+                        : unified(leftDefinition, rightDefinition)
                     : a != null ? oneSided(a.definition(), false) : oneSided(b.definition(), true);
+            if (a != null && b != null) {
+                String[] originalLeft = a.definition().split("\n", -1), originalRight = b.definition().split("\n", -1);
+                diff = diff.stream().map(line -> new DiffLine(line.type(),
+                        line.sourceLineNumber() != null ? originalLeft[Math.min(line.sourceLineNumber() - 1, originalLeft.length - 1)]
+                                : originalRight[Math.min(line.targetLineNumber() - 1, originalRight.length - 1)],
+                        line.sourceLineNumber(), line.targetLineNumber())).toList();
+            }
             results.add(new Result(key, status, a, b, diff));
         }
         return results;
+    }
+
+    private static String displayDefinition(String definition, SchemaObject.Kind kind, boolean normalizeMySqlDefinition,
+                                            boolean ignoreMySqlDefiner, boolean ignoreMySqlEnvironmentQualifiers) {
+        if (!normalizeMySqlDefinition) return definition;
+        return switch (kind) {
+            case VIEW, PROCEDURE, FUNCTION -> ignoreMySqlDefiner
+                    ? SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(definition) : definition;
+            case TRIGGER -> {
+                String normalized = ignoreMySqlDefiner
+                        ? SqlDefinitionCanonicalizer.withoutMySqlTriggerDefiner(definition) : definition;
+                yield ignoreMySqlEnvironmentQualifiers
+                        ? SqlDefinitionCanonicalizer.withoutMySqlTriggerDatabase(normalized) : normalized;
+            }
+            default -> definition;
+        };
     }
 
     private static Map<SchemaObject.Key, SchemaObject> index(List<SchemaObject> values) {
@@ -34,11 +96,11 @@ public final class DiffEngine {
         // cambio su número real en origen o destino. Tiempo y memoria son O(n*m).
         int n = a.length, m = b.length; int[][] lcs = new int[n + 1][m + 1];
         for (int i = n - 1; i >= 0; i--) for (int j = m - 1; j >= 0; j--)
-            lcs[i][j] = a[i].equals(b[j]) ? 1 + lcs[i + 1][j + 1] : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+            lcs[i][j] = a[i].stripTrailing().equals(b[j].stripTrailing()) ? 1 + lcs[i + 1][j + 1] : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
         List<DiffLine> out = new ArrayList<>();
         int i = 0, j = 0;
         while (i < n || j < m) {
-            if (i < n && j < m && a[i].equals(b[j])) {
+            if (i < n && j < m && a[i].stripTrailing().equals(b[j].stripTrailing())) {
                 out.add(new DiffLine(LineType.CONTEXT, a[i], i + 1, j + 1)); i++; j++;
             } else if (j < m && (i == n || lcs[i][j + 1] > lcs[i + 1][j])) {
                 out.add(new DiffLine(LineType.ADDED, b[j], null, j + 1)); j++;

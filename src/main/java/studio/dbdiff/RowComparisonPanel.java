@@ -120,7 +120,10 @@ final class RowComparisonPanel extends JPanel {
         long modifications = result.changes().stream().filter(change -> change.status() == RowDiff.Status.DIFFERENT).count();
         long identical = result.changes().stream().filter(change -> change.status() == RowDiff.Status.IDENTICAL).count();
         String comparisonKey = result.comparisonKey().stream().map(RowDiff.Column::name).collect(Collectors.joining(", "));
-        summary.setText(result.table().name() + " · " + result.changes().size() + " filas · " + (additions + removals + modifications) + " con diferencias");
+        long reviewedRows = result.matchedRows() + result.sourceOnly() + result.targetOnly();
+        summary.setText(result.table().name() + " · " + reviewedRows + " claves revisadas · "
+                + (result.sourceOnly() + result.targetOnly() + result.different()) + " con diferencias"
+                + (result.truncated() ? " · muestra de " + result.changes().size() : ""));
         summary.setToolTipText("Clave de comparación: " + comparisonKey + " · " + result.matchedRows() + " claves coincidentes"
                 + (result.warning().isBlank() ? "" : " · " + result.warning()));
         export.setEnabled(additions + removals + modifications > 0);
@@ -205,7 +208,8 @@ final class RowComparisonPanel extends JPanel {
         }
 
         if (result.truncated()) {
-            JLabel warning = new JLabel("Resultados limitados: no se muestran todas las filas comparadas.");
+            JLabel warning = new JLabel("Muestra limitada: se revisaron todas las claves, pero la vista y la exportación incluyen solo "
+                    + result.changes().size() + " filas.");
             warning.setForeground(javax.swing.UIManager.getColor("Component.warning.focusedBorderColor"));
             resultContent.add(warning, BorderLayout.SOUTH);
         }
