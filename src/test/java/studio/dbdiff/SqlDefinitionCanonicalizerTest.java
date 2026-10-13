@@ -124,6 +124,46 @@ class SqlDefinitionCanonicalizerTest {
         assertEquals("CREATE VIEW v AS SELECT 'DEFINER=user'", SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(ddl));
     }
 
+    @Test
+    void canIgnoreMysqlTriggerDatabaseQualifierButKeepsTriggerBodySignificant() {
+        String source = "CREATE DEFINER=`dev`@`%` TRIGGER sistemadb_dev.acta_delete_logs AFTER DELETE ON actas FOR EACH ROW INSERT INTO logs VALUES (OLD.id)";
+        String target = source.replace("sistemadb_dev", "sistemadb_qa");
+        SchemaObject.Key key = new SchemaObject.Key(SchemaObject.Kind.TRIGGER, "acta_delete_logs", "");
+        SchemaObject left = new SchemaObject(key, source, mysql(source, false));
+        SchemaObject right = new SchemaObject(key, target, mysql(target, false));
+
+        DiffEngine.Result defaultResult = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.TRIGGER), java.util.Set.of(key)).get(0);
+        DiffEngine.Result ignoredResult = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.TRIGGER), java.util.Set.of(key), true).get(0);
+
+        assertEquals(DiffEngine.Status.CHANGED, defaultResult.status());
+        assertEquals(DiffEngine.Status.IDENTICAL, ignoredResult.status());
+        SchemaObject changedBody = new SchemaObject(key, target.replace("OLD.id", "OLD.other_id"), mysql(target, false));
+        DiffEngine.Result bodyChange = new DiffEngine().compare(List.of(left), List.of(changedBody),
+                java.util.EnumSet.of(SchemaObject.Kind.TRIGGER), java.util.Set.of(key), true).get(0);
+        assertEquals(DiffEngine.Status.CHANGED, bodyChange.status());
+    }
+
+    @Test
+    void canIgnoreMysqlRoutineDefinerWithoutChangingParametersOrBody() {
+        String source = "CREATE DEFINER=`sistemausr_dev`@`%` PROCEDURE `sp_validar_periodo_campania`(periodoCampania int,idEstablecimiento bigint) BEGIN SELECT periodoCampania; END";
+        String target = source.replace("sistemausr_dev", "sistemausr_qa");
+        SchemaObject.Key key = new SchemaObject.Key(SchemaObject.Kind.PROCEDURE, "sp_validar_periodo_campania", "");
+        SchemaObject left = new SchemaObject(key, source, mysql(source, false));
+        SchemaObject right = new SchemaObject(key, target, mysql(target, false));
+
+        DiffEngine.Result ignoredDefiner = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.PROCEDURE), java.util.Set.of(key), true).get(0);
+        assertEquals(DiffEngine.Status.IDENTICAL, ignoredDefiner.status());
+
+        SchemaObject changedParameters = new SchemaObject(key,
+                target.replace("idEstablecimiento bigint", "idEstablecimiento int"), mysql(target, false));
+        DiffEngine.Result parameterChange = new DiffEngine().compare(List.of(left), List.of(changedParameters),
+                java.util.EnumSet.of(SchemaObject.Kind.PROCEDURE), java.util.Set.of(key), true).get(0);
+        assertEquals(DiffEngine.Status.CHANGED, parameterChange.status());
+    }
+
     private static void assertSameMysql(String left, String right, boolean table) {
         assertEquals(mysql(left, table), mysql(right, table));
     }

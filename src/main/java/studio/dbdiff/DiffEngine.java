@@ -20,8 +20,11 @@ public final class DiffEngine {
         for (SchemaObject.Key key : keys) {
             if (!kinds.contains(key.kind()) || (!selected.isEmpty() && !selected.contains(key))) continue;
             SchemaObject a = left.get(key), b = right.get(key);
-            boolean identical = a != null && b != null && (ignoreMySqlViewDefiner && key.kind() == SchemaObject.Kind.VIEW
-                    ? comparableSignature(a).equals(comparableSignature(b))
+            boolean normalizeMySqlDefinition = ignoreMySqlViewDefiner
+                    && (key.kind() == SchemaObject.Kind.VIEW || key.kind() == SchemaObject.Kind.TRIGGER
+                        || key.kind() == SchemaObject.Kind.PROCEDURE || key.kind() == SchemaObject.Kind.FUNCTION);
+            boolean identical = a != null && b != null && (normalizeMySqlDefinition
+                    ? comparableSignature(a, key.kind()).equals(comparableSignature(b, key.kind()))
                     : a.signature().equals(b.signature()));
             Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : identical ? Status.IDENTICAL : Status.CHANGED;
             List<DiffLine> diff = a != null && b != null
@@ -32,8 +35,12 @@ public final class DiffEngine {
         return results;
     }
 
-    private static String comparableSignature(SchemaObject object) {
-        String definition = SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(object.definition());
+    private static String comparableSignature(SchemaObject object, SchemaObject.Kind kind) {
+        String definition = switch (kind) {
+            case VIEW, PROCEDURE, FUNCTION -> SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(object.definition());
+            case TRIGGER -> SqlDefinitionCanonicalizer.withoutMySqlTriggerDatabase(object.definition());
+            default -> object.definition();
+        };
         return SqlDefinitionCanonicalizer.signature(definition, SqlDefinitionCanonicalizer.Dialect.MYSQL, false);
     }
 

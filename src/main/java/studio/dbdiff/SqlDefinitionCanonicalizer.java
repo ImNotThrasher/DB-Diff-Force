@@ -140,6 +140,13 @@ final class SqlDefinitionCanonicalizer {
         return sql.replaceFirst("(?is)^(\\s*CREATE\\s+(?:(?:OR\\s+REPLACE)\\s+)?(?:ALGORITHM\\s*=\\s*\\w+\\s+)?)(?:DEFINER\\s*=\\s*[^\\s]+\\s+)", "$1");
     }
 
+    /** Removes the environment-specific database qualifier from a MySQL/MariaDB trigger name. */
+    static String withoutMySqlTriggerDatabase(String sql) {
+        if (sql == null || sql.isEmpty()) return sql;
+        String withoutDefiner = sql.replaceFirst("(?is)^(\\s*CREATE\\s+)DEFINER\\s*=\\s*[^\\s]+\\s+", "$1");
+        return withoutDefiner.replaceFirst("(?is)^(\\s*CREATE\\s+TRIGGER\\s+)(?:`(?:``|[^`])+`|[\\w$]+)\\s*\\.\\s*", "$1");
+    }
+
     // Typed, length-prefixed tokens keep boundaries unambiguous after whitespace is discarded.
     private static void appendToken(StringBuilder output, char type, String value) {
         output.append(type).append(value.length()).append(':').append(value).append(';');
