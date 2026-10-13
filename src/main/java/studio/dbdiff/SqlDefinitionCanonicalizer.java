@@ -134,6 +134,12 @@ final class SqlDefinitionCanonicalizer {
         return result.toString();
     }
 
+    /** Removes only a leading MySQL/MariaDB view DEFINER clause for comparison. */
+    static String withoutMySqlViewDefiner(String sql) {
+        if (sql == null || sql.isEmpty()) return sql;
+        return sql.replaceFirst("(?is)^(\\s*CREATE\\s+(?:(?:OR\\s+REPLACE)\\s+)?(?:ALGORITHM\\s*=\\s*\\w+\\s+)?)(?:DEFINER\\s*=\\s*[^\\s]+\\s+)", "$1");
+    }
+
     // Typed, length-prefixed tokens keep boundaries unambiguous after whitespace is discarded.
     private static void appendToken(StringBuilder output, char type, String value) {
         output.append(type).append(value.length()).append(':').append(value).append(';');

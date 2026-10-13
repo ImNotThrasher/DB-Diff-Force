@@ -9,19 +9,32 @@ public final class DiffEngine {
     public record Result(SchemaObject.Key key, Status status, SchemaObject source, SchemaObject target, List<DiffLine> diffLines) { }
 
     public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds, Set<SchemaObject.Key> selected) {
+        return compare(source, target, kinds, selected, false);
+    }
+
+    public List<Result> compare(List<SchemaObject> source, List<SchemaObject> target, Set<SchemaObject.Kind> kinds,
+                                Set<SchemaObject.Key> selected, boolean ignoreMySqlViewDefiner) {
         Map<SchemaObject.Key, SchemaObject> left = index(source), right = index(target);
         TreeSet<SchemaObject.Key> keys = new TreeSet<>(); keys.addAll(left.keySet()); keys.addAll(right.keySet());
         List<Result> results = new ArrayList<>();
         for (SchemaObject.Key key : keys) {
             if (!kinds.contains(key.kind()) || (!selected.isEmpty() && !selected.contains(key))) continue;
             SchemaObject a = left.get(key), b = right.get(key);
-            Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : a.signature().equals(b.signature()) ? Status.IDENTICAL : Status.CHANGED;
+            boolean identical = a != null && b != null && (ignoreMySqlViewDefiner && key.kind() == SchemaObject.Kind.VIEW
+                    ? comparableSignature(a).equals(comparableSignature(b))
+                    : a.signature().equals(b.signature()));
+            Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : identical ? Status.IDENTICAL : Status.CHANGED;
             List<DiffLine> diff = a != null && b != null
                     ? status == Status.IDENTICAL ? equivalentLines(a.definition(), b.definition()) : unified(a.definition(), b.definition())
                     : a != null ? oneSided(a.definition(), false) : oneSided(b.definition(), true);
             results.add(new Result(key, status, a, b, diff));
         }
         return results;
+    }
+
+    private static String comparableSignature(SchemaObject object) {
+        String definition = SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(object.definition());
+        return SqlDefinitionCanonicalizer.signature(definition, SqlDefinitionCanonicalizer.Dialect.MYSQL, false);
     }
 
     private static Map<SchemaObject.Key, SchemaObject> index(List<SchemaObject> values) {

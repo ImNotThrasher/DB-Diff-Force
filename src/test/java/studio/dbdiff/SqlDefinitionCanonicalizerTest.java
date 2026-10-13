@@ -99,6 +99,31 @@ class SqlDefinitionCanonicalizerTest {
         assertEquals(formatted, result.target().definition());
     }
 
+    @Test
+    void canIgnoreMysqlViewDefinerWithoutChangingDisplayedDefinitions() {
+        String source = "CREATE ALGORITHM=UNDEFINED DEFINER=`sistemausr_dev`@`%` SQL SECURITY DEFINER VIEW `vista_tecnica_seguimiento` AS SELECT 1";
+        String target = source.replace("sistemausr_dev", "sistemausr_qa");
+        SchemaObject.Key key = new SchemaObject.Key(SchemaObject.Kind.VIEW, "vista_tecnica_seguimiento", "");
+        SchemaObject left = new SchemaObject(key, source, mysql(source, false));
+        SchemaObject right = new SchemaObject(key, target, mysql(target, false));
+
+        DiffEngine.Result defaultResult = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.VIEW), java.util.Set.of(key)).get(0);
+        DiffEngine.Result ignoredResult = new DiffEngine().compare(List.of(left), List.of(right),
+                java.util.EnumSet.of(SchemaObject.Kind.VIEW), java.util.Set.of(key), true).get(0);
+
+        assertEquals(DiffEngine.Status.CHANGED, defaultResult.status());
+        assertEquals(DiffEngine.Status.IDENTICAL, ignoredResult.status());
+        assertEquals(source, ignoredResult.source().definition());
+        assertEquals(target, ignoredResult.target().definition());
+    }
+
+    @Test
+    void definerExclusionOnlyRemovesLeadingDefinerClause() {
+        String ddl = "CREATE DEFINER=`user`@`%` VIEW v AS SELECT 'DEFINER=user'";
+        assertEquals("CREATE VIEW v AS SELECT 'DEFINER=user'", SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(ddl));
+    }
+
     private static void assertSameMysql(String left, String right, boolean table) {
         assertEquals(mysql(left, table), mysql(right, table));
     }
