@@ -40,8 +40,8 @@ final class SettingsDialog {
         JCheckBox stacked = new JCheckBox("Mostrar listado de objetos arriba (desmarcado: lateral)", !stackedLayout);
         JCheckBox keepRowsExpanded = new JCheckBox("Mantener Comparación de filas desplegada al cambiar de objeto", keepRowComparisonExpanded);
         JCheckBox rememberLast = new JCheckBox("Recordar y reconectar la última comparación al iniciar", rememberLastComparison);
-        JCheckBox ignoreDefiner = new JCheckBox("Ignorar DEFINER en vistas MySQL/MariaDB al comparar", ignoreMySqlViewDefiner);
-        ignoreDefiner.setToolTipText("Solo afecta si una vista aparece como cambiada; el SQL original se conserva para mostrar y exportar.");
+        JCheckBox ignoreDefiner = new JCheckBox("Ignorar DEFINER y calificadores de entorno MySQL/MariaDB", ignoreMySqlViewDefiner);
+        ignoreDefiner.setToolTipText("En vistas y rutinas omite DEFINER; en triggers omite DEFINER y la base del nombre. El SQL original se conserva para mostrar y exportar.");
         JCheckBox ignoreCommentsChoice = new JCheckBox("Ignorar comentarios al comparar SQL", ignoreComments);
         ignoreCommentsChoice.setToolTipText("Conserva el SQL original y los comentarios ejecutables; ignora solo comentarios comunes.");
         JCheckBox ignoreAutoIncrementChoice = new JCheckBox("Ignorar contador AUTO_INCREMENT de las tablas", ignoreAutoIncrement);
