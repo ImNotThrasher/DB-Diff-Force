@@ -38,7 +38,7 @@ public final class ComparisonView extends JPanel {
     private final JLabel targetProfileBadge = new JLabel();
     private final JLabel modeNotice = new JLabel("Solo comparación de esquema");
     private final JTextArea summary = new JTextArea();
-    private final JLabel comparisonOptionsHeading = new JLabel("Exclusiones activas");
+    private final JLabel comparisonOptionsHeading = new JLabel("Se ignoran al comparar");
     private final JPanel comparisonOptions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
     private JPanel comparisonOptionsNote;
     private final DiffCodeEditor source = new DiffCodeEditor(false, true);

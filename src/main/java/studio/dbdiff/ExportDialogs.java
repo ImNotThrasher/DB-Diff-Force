@@ -167,6 +167,8 @@ final class ExportDialogs {
         exportSelection.setVisibleRowCount(4);
         JTextField objectSearch = new PlaceholderTextField("Buscar por nombre o tipo...");
         JLabel selectionSummary = new JLabel();
+        JLabel operationSummary = new JLabel();
+        operationSummary.setBorder(new EmptyBorder(4, 2, 4, 2));
         JButton selectVisible = new JButton("Seleccionar visibles");
         JButton clearSelection = new JButton("Limpiar");
         JPanel selectionActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
@@ -206,6 +208,19 @@ final class ExportDialogs {
         };
         Runnable refreshPreview = () -> {
             List<DiffEngine.Result> exportResults = selection.selectedItems();
+            long createCount = ops.contains(DiffEngine.Status.SOURCE_ONLY)
+                    ? exportResults.stream().filter(result -> result.status() == DiffEngine.Status.SOURCE_ONLY).count() : 0;
+            long alterCount = ops.contains(DiffEngine.Status.CHANGED)
+                    ? exportResults.stream().filter(result -> result.status() == DiffEngine.Status.CHANGED).count() : 0;
+            long dropCount = ops.contains(DiffEngine.Status.TARGET_ONLY)
+                    ? exportResults.stream().filter(result -> result.status() == DiffEngine.Status.TARGET_ONLY).count() : 0;
+            operationSummary.setText("Incluye: " + createCount + " CREATE · " + alterCount + " ALTER · " + dropCount + " DROP");
+            operationSummary.setForeground(dropCount > 0
+                    ? javax.swing.UIManager.getColor("Component.warning.focusedBorderColor")
+                    : javax.swing.UIManager.getColor("Label.foreground"));
+            operationSummary.setToolTipText(dropCount > 0
+                    ? dropCount + " objetos se eliminarán del destino porque no existen en el origen."
+                    : "Resumen de operaciones incluidas en la vista previa.");
             SqlExporter.Strategy strategy = switch (createStrategy.getSelectedIndex()) {
                 case 1 -> SqlExporter.Strategy.CREATE;
                 case 2 -> sqlServerExport ? SqlExporter.Strategy.CREATE_OR_ALTER : SqlExporter.Strategy.CREATE_OR_REPLACE;
@@ -225,22 +240,32 @@ final class ExportDialogs {
             planPreview.setCaretPosition(0);
             preview.setCaretPosition(0);
             boolean hasApplicableOperation = selection.canExport(ops);
-            if (exportResults.isEmpty()) warning.setText("Seleccioná al menos un objeto para ver el script.");
-            else if (ops.isEmpty()) warning.setText("Activá al menos una operación para generar el SQL.");
-            else if (!hasApplicableOperation) warning.setText("La selección no tiene objetos para las operaciones activas. Activá DROP para incluir objetos solo en destino.");
-            else if (schemaEngine == DatabaseEngine.SQLSERVER && strategy == SqlExporter.Strategy.CREATE_OR_ALTER)
-                warning.setText("CREATE OR ALTER requiere SQL Server 2016 SP1 o posterior; los cambios de tablas quedan para revisión manual.");
-            else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MARIADB && exportResults.stream().anyMatch(r -> r.key().kind() == SchemaObject.Kind.TABLE && r.status() == DiffEngine.Status.CHANGED))
-                warning.setText("CREATE OR REPLACE TABLE elimina y recrea la tabla destino, incluidos sus datos.");
-            else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MYSQL)
-                warning.setText("MySQL admite CREATE OR REPLACE para vistas. Las tablas modificadas se exportan como ALTER si se pueden derivar.");
-            else if (transaction.isSelected() && schemaEngine == DatabaseEngine.SQLSERVER && rollbackOnError.isSelected())
-                warning.setText("Si una operación falla, el script revierte la transacción completa. Revisá el SQL antes de aplicarlo.");
-            else if (transaction.isSelected() && schemaEngine == DatabaseEngine.SQLSERVER)
-                warning.setText("El script usa transacción explícita sin rollback automático ante errores. Revisá cada sentencia antes de aplicarlo.");
-            else if (transaction.isSelected())
-                warning.setText("MariaDB puede confirmar DDL automáticamente; la transacción no garantiza rollback del esquema.");
-            else warning.setText("El SQL solo se exporta; la aplicación nunca lo ejecuta.");
+            List<String> notices = new ArrayList<>();
+            if (exportResults.isEmpty()) notices.add("Seleccioná al menos un objeto para ver el script.");
+            else if (ops.isEmpty()) notices.add("Activá al menos una operación para generar el SQL.");
+            else if (!hasApplicableOperation) notices.add("La selección no tiene objetos para las operaciones activas. Activá DROP para incluir objetos solo en destino.");
+            else {
+                if (dropCount > 0)
+                    notices.add("⚠ Se eliminarán " + dropCount + " objetos del destino que no existen en el origen. Revisá la selección y el SQL antes de exportar.");
+                boolean recreatesMariaDbTables = strategy == SqlExporter.Strategy.CREATE_OR_REPLACE
+                        && schemaEngine == DatabaseEngine.MARIADB
+                        && exportResults.stream().anyMatch(result -> result.key().kind() == SchemaObject.Kind.TABLE
+                                && result.status() == DiffEngine.Status.CHANGED);
+                if (recreatesMariaDbTables)
+                    notices.add("⚠ CREATE OR REPLACE TABLE elimina y recrea la tabla destino, incluidos sus datos.");
+                if (schemaEngine == DatabaseEngine.SQLSERVER && strategy == SqlExporter.Strategy.CREATE_OR_ALTER)
+                    notices.add("CREATE OR ALTER requiere SQL Server 2016 SP1 o posterior; los cambios de tablas quedan para revisión manual.");
+                else if (strategy == SqlExporter.Strategy.CREATE_OR_REPLACE && schemaEngine == DatabaseEngine.MYSQL)
+                    notices.add("MySQL admite CREATE OR REPLACE para vistas. Las tablas modificadas se exportan como ALTER si se pueden derivar.");
+                if (transaction.isSelected() && schemaEngine == DatabaseEngine.SQLSERVER && rollbackOnError.isSelected())
+                    notices.add("Si una operación falla, el script revierte la transacción completa. Revisá el SQL antes de aplicarlo.");
+                else if (transaction.isSelected() && schemaEngine == DatabaseEngine.SQLSERVER)
+                    notices.add("El script usa transacción explícita sin rollback automático ante errores. Revisá cada sentencia antes de aplicarlo.");
+                else if (transaction.isSelected())
+                    notices.add("MariaDB puede confirmar DDL automáticamente; la transacción no garantiza rollback del esquema.");
+                if (notices.isEmpty()) notices.add("El SQL solo se exporta; la aplicación nunca lo ejecuta.");
+            }
+            warning.setText(String.join("\n", notices));
             if (saveButton[0] != null) saveButton[0].setEnabled(!exportResults.isEmpty() && !ops.isEmpty() && hasApplicableOperation);
         };
         refreshPreviewRef[0] = refreshPreview;
@@ -297,7 +322,10 @@ final class ExportDialogs {
         JTabbedPane reviewTabs = new JTabbedPane();
         reviewTabs.addTab("SQL", SqlSearchOverlay.wrap(preview));
         reviewTabs.addTab("Plan y dependencias", SqlSearchOverlay.wrap(planPreview));
-        previewPanel.add(reviewTabs, BorderLayout.CENTER);
+        JPanel reviewContent = new JPanel(new BorderLayout(0, 4));
+        reviewContent.add(operationSummary, BorderLayout.NORTH);
+        reviewContent.add(reviewTabs, BorderLayout.CENTER);
+        previewPanel.add(reviewContent, BorderLayout.CENTER);
         selectionPanel.setMinimumSize(new Dimension(0, 0));
         previewPanel.setMinimumSize(new Dimension(0, 0));
         JSplitPane exportSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, selectionPanel, previewPanel);

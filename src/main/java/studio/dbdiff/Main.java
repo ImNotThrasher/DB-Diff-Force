@@ -393,14 +393,14 @@ public final class Main {
                 int totalObjects = countSelected(sourceCatalog, kinds, selectedKeys) + countSelected(targetCatalog, kinds, selectedKeys);
                 SwingUtilities.invokeLater(() -> {
                     if (request == comparisonRequest && schemaComparisonRunning && totalObjects > 0)
-                        showProgress(0, totalObjects, "Leyendo definiciones");
+                        showProgress(0, totalObjects, "Definiciones de origen y destino");
                 });
                 int[] completed = {0};
                 IntConsumer progress = ignored -> {
                     int value = ++completed[0];
                     SwingUtilities.invokeLater(() -> {
                         if (request == comparisonRequest && schemaComparisonRunning)
-                            showProgress(value, totalObjects, "Leyendo definiciones");
+                            showProgress(value, totalObjects, "Definiciones de origen y destino");
                     });
                 };
                 BooleanSupplier current = () -> request == comparisonRequest;
@@ -423,7 +423,8 @@ public final class Main {
                     compared = true; results.forEach(r -> comparedKeys.add(r.key())); setResultItems(results);
                     rowComparisonPanel.clearResult(false); selectedSchemaResult = null; comparisonView.showMessage("");
                     refreshDependencyStatus();
-                    setBusy(false, "Comparación lista · " + results.size() + " objetos · " + countChanged(results) + " con cambios");
+                    setBusy(false, "Comparación lista · " + results.size() + " objetos revisados · "
+                            + countChanged(results) + " con cambios · " + (a.size() + b.size()) + " definiciones leídas");
                 });
             } catch (SQLException | RuntimeException ex) { SwingUtilities.invokeLater(() -> { if (request != comparisonRequest) return; schemaComparisonRunning = false; setBusy(false, "Error al comparar"); error("No se pudieron leer las definiciones del esquema", ex); }); }
         });
@@ -828,10 +829,11 @@ public final class Main {
     }
 
     private static String rowSummary(RowDiff.Result rows) {
-        long totalRows = rows.matchedRows() + rows.sourceOnly() + rows.targetOnly();
-        return "Filas revisadas · " + totalRows + " en total · " + rows.matchedRows() + " claves coincidentes · " + rows.sourceOnly()
-                + " solo en origen · " + rows.targetOnly() + " solo en destino · " + rows.different() + " diferentes"
-                + (rows.truncated() ? " · resultados limitados" : "");
+        long reviewed = rows.matchedRows() + rows.sourceOnly() + rows.targetOnly();
+        long differences = rows.sourceOnly() + rows.targetOnly() + rows.different();
+        return "Filas revisadas · " + reviewed + " claves · " + differences + " con diferencias · "
+                + rows.changes().size() + " en la muestra"
+                + (rows.truncated() ? " · muestra limitada" : "");
     }
 
     private void showCatalogDiagnostics() {
