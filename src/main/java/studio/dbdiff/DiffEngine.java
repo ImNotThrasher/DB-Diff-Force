@@ -28,7 +28,9 @@ public final class DiffEngine {
                     : a.signature().equals(b.signature()));
             Status status = a == null ? Status.TARGET_ONLY : b == null ? Status.SOURCE_ONLY : identical ? Status.IDENTICAL : Status.CHANGED;
             List<DiffLine> diff = a != null && b != null
-                    ? status == Status.IDENTICAL ? equivalentLines(a.definition(), b.definition()) : unified(a.definition(), b.definition())
+                    ? status == Status.IDENTICAL ? equivalentLines(a.definition(), b.definition())
+                        : unified(displayDefinition(a.definition(), key.kind(), normalizeMySqlDefinition),
+                            displayDefinition(b.definition(), key.kind(), normalizeMySqlDefinition))
                     : a != null ? oneSided(a.definition(), false) : oneSided(b.definition(), true);
             results.add(new Result(key, status, a, b, diff));
         }
@@ -36,12 +38,17 @@ public final class DiffEngine {
     }
 
     private static String comparableSignature(SchemaObject object, SchemaObject.Kind kind) {
-        String definition = switch (kind) {
-            case VIEW, PROCEDURE, FUNCTION -> SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(object.definition());
-            case TRIGGER -> SqlDefinitionCanonicalizer.withoutMySqlTriggerDatabase(object.definition());
-            default -> object.definition();
-        };
+        String definition = displayDefinition(object.definition(), kind, true);
         return SqlDefinitionCanonicalizer.signature(definition, SqlDefinitionCanonicalizer.Dialect.MYSQL, false);
+    }
+
+    private static String displayDefinition(String definition, SchemaObject.Kind kind, boolean normalizeMySqlDefinition) {
+        if (!normalizeMySqlDefinition) return definition;
+        return switch (kind) {
+            case VIEW, PROCEDURE, FUNCTION -> SqlDefinitionCanonicalizer.withoutMySqlViewDefiner(definition);
+            case TRIGGER -> SqlDefinitionCanonicalizer.withoutMySqlTriggerDatabase(definition);
+            default -> definition;
+        };
     }
 
     private static Map<SchemaObject.Key, SchemaObject> index(List<SchemaObject> values) {
