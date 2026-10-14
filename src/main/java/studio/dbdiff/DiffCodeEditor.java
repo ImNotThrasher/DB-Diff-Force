@@ -240,13 +240,18 @@ final class DiffCodeEditor extends JPanel {
                 if (type == DiffEngine.LineType.CONTEXT) continue;
                 try {
                     Element line = getDocument().getDefaultRootElement().getElement(i);
-                    Rectangle2D bounds = modelToView2D(line.getStartOffset());
-                    if (bounds == null) continue;
-                    int y = (int) Math.floor(bounds.getY());
-                    if (y + metrics.getHeight() < 0 || y > getHeight()) continue;
+                    int startOffset = line.getStartOffset();
+                    int endOffset = Math.max(startOffset, Math.min(getDocument().getLength(), line.getEndOffset() - 1));
+                    Rectangle2D startBounds = modelToView2D(startOffset);
+                    Rectangle2D endBounds = modelToView2D(endOffset);
+                    if (startBounds == null || endBounds == null) continue;
+                    int y = (int) Math.floor(startBounds.getY());
+                    int bottom = (int) Math.ceil(endBounds.getY() + endBounds.getHeight());
+                    int height = Math.max(metrics.getHeight(), bottom - y);
+                    if (y + height < 0 || y > getHeight()) continue;
                     g.setColor(type == DiffEngine.LineType.ADDED
                             ? palette.addedBackground() : palette.removedBackground());
-                    g.fillRect(0, y, getWidth(), metrics.getHeight());
+                    g.fillRect(0, y, getWidth(), height);
                 } catch (javax.swing.text.BadLocationException ignored) { break; }
             }
             g.dispose();
