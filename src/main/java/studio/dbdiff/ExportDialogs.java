@@ -35,22 +35,25 @@ final class ExportDialogs {
         JTextArea preview = area();
         JCheckBox insertChoice = new JCheckBox("INSERT: filas solo en origen", inserts), updateChoice = new JCheckBox("UPDATE: filas diferentes", updates), deleteChoice = new JCheckBox("DELETE: filas solo en destino", deletes);
         JCheckBox transaction = new JCheckBox("Envolver el archivo (o cada archivo separado) en una transacción");
+        JCheckBox convertText = new JCheckBox("Codificar texto como CONVERT hexadecimal (UTF-8)");
+        convertText.setToolTipText("Hace explícita la codificación UTF-8 del texto en MySQL/MariaDB. Desactivado, genera literales de texto legibles.");
         JComboBox<String> fileMode = new JComboBox<>(new String[]{"Un archivo SQL", "Separar por operación (INSERT / UPDATE / DELETE)"});
         fileMode.setToolTipText("Al separar, se genera un archivo por cada tipo de instrucción seleccionado.");
         Runnable refresh = () -> {
             try {
                 preview.setText(rowSqlPreview(rows, insertChoice.isSelected(), updateChoice.isSelected(), deleteChoice.isSelected(),
-                        transaction.isSelected(), fileMode.getSelectedIndex() == 1, schemaEngine));
+                        transaction.isSelected(), fileMode.getSelectedIndex() == 1, schemaEngine, convertText.isSelected()));
                 preview.setCaretPosition(0);
             } catch (RuntimeException ex) {
                 preview.setText("No se pudo preparar la exportación: " + AppUtils.errorMessage(ex));
             }
         };
         insertChoice.addActionListener(e -> refresh.run()); updateChoice.addActionListener(e -> refresh.run()); deleteChoice.addActionListener(e -> refresh.run());
-        transaction.addActionListener(e -> refresh.run()); fileMode.addActionListener(e -> refresh.run());
+        transaction.addActionListener(e -> refresh.run()); fileMode.addActionListener(e -> refresh.run()); convertText.addActionListener(e -> refresh.run());
         JPanel choices = new JPanel(new GridLayout(0, 1)); choices.add(insertChoice); choices.add(updateChoice); choices.add(deleteChoice);
         JPanel format = new JPanel(new FlowLayout(FlowLayout.LEFT)); format.add(new JLabel("Formato:")); format.add(fileMode);
-        JPanel options = new JPanel(); options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS)); options.add(choices); options.add(format); options.add(ReviewDialog.disclosure("Opciones avanzadas", transaction));
+        JPanel advancedOptions = new JPanel(new GridLayout(0, 1)); advancedOptions.add(transaction); advancedOptions.add(convertText);
+        JPanel options = new JPanel(); options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS)); options.add(choices); options.add(format); options.add(ReviewDialog.disclosure("Opciones avanzadas", advancedOptions));
         JPanel wrapper = new JPanel(new BorderLayout(8, 8)); wrapper.add(options, BorderLayout.NORTH); wrapper.add(SqlSearchOverlay.wrap(preview), BorderLayout.CENTER);
         JTextArea warning = ReviewDialog.note("Solo se exporta; nunca se ejecuta. En modo separado, cada archivo tiene su propia transacción."); wrapper.add(warning, BorderLayout.SOUTH); wrapper.setPreferredSize(new Dimension(900, 540));
         refresh.run();
@@ -62,7 +65,8 @@ final class ExportDialogs {
         }
         try {
             if (fileMode.getSelectedIndex() == 1) {
-                exportRowsByOperation(rows, includeInserts, includeUpdates, includeDeletes, transaction.isSelected());
+                exportRowsByOperation(rows, includeInserts, includeUpdates, includeDeletes,
+                        transaction.isSelected(), convertText.isSelected());
                 return;
             }
             JFileChooser chooser = new JFileChooser(); chooser.setSelectedFile(new java.io.File("db-diff-exportacion-filas.sql"));
@@ -70,7 +74,7 @@ final class ExportDialogs {
             if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
             java.io.File output = chooser.getSelectedFile();
             if (output.exists() && JOptionPane.showConfirmDialog(frame, "El archivo ya existe. ¿Querés reemplazarlo?", "Confirmar reemplazo", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
-            String sql = RowSqlExporter.export(rows, includeInserts, includeUpdates, includeDeletes, transaction.isSelected(), schemaEngine);
+            String sql = RowSqlExporter.export(rows, includeInserts, includeUpdates, includeDeletes, transaction.isSelected(), schemaEngine, convertText.isSelected());
             Files.writeString(output.toPath(), sql, StandardCharsets.UTF_8);
             JOptionPane.showMessageDialog(frame, "Se guardó el SQL de filas. No se ejecutó.\n" + output.getAbsolutePath(), "Exportación lista", JOptionPane.INFORMATION_MESSAGE);
         }
@@ -79,33 +83,35 @@ final class ExportDialogs {
     }
 
     private static String rowSqlPreview(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes,
-                                        boolean transaction, boolean separateFiles, DatabaseEngine engine) {
+                                        boolean transaction, boolean separateFiles, DatabaseEngine engine, boolean convertTextToUtf8Hex) {
         if (!hasSelectedRowChanges(rows, inserts, updates, deletes))
             return "-- No hay filas para exportar con estas operaciones.\n-- Activá DELETE si solo hay registros presentes en destino.";
-        if (!separateFiles) return RowSqlExporter.export(rows, inserts, updates, deletes, transaction, engine);
+        if (!separateFiles) return RowSqlExporter.export(rows, inserts, updates, deletes, transaction, engine, convertTextToUtf8Hex);
         StringBuilder preview = new StringBuilder("-- Vista previa: cada bloque se guardará en un archivo separado.\n");
-        appendRowSqlSection(preview, "INSERT", rows, inserts, false, false, transaction, engine);
-        appendRowSqlSection(preview, "UPDATE", rows, false, updates, false, transaction, engine);
-        appendRowSqlSection(preview, "DELETE", rows, false, false, deletes, transaction, engine);
+        appendRowSqlSection(preview, "INSERT", rows, inserts, false, false, transaction, engine, convertTextToUtf8Hex);
+        appendRowSqlSection(preview, "UPDATE", rows, false, updates, false, transaction, engine, convertTextToUtf8Hex);
+        appendRowSqlSection(preview, "DELETE", rows, false, false, deletes, transaction, engine, convertTextToUtf8Hex);
         return preview.toString();
     }
 
     private static void appendRowSqlSection(StringBuilder preview, String name, RowDiff.Result rows,
-                                            boolean inserts, boolean updates, boolean deletes, boolean transaction, DatabaseEngine engine) {
+                                            boolean inserts, boolean updates, boolean deletes, boolean transaction, DatabaseEngine engine,
+                                            boolean convertTextToUtf8Hex) {
         if (!hasSelectedRowChanges(rows, inserts, updates, deletes)) return;
         preview.append("\n-- Archivo: db-diff-").append(name.toLowerCase(Locale.ROOT)).append(".sql\n");
-        preview.append(RowSqlExporter.export(rows, inserts, updates, deletes, transaction, engine));
+        preview.append(RowSqlExporter.export(rows, inserts, updates, deletes, transaction, engine, convertTextToUtf8Hex));
     }
 
-    private void exportRowsByOperation(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes, boolean transaction) throws IOException {
+    private void exportRowsByOperation(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes,
+                                       boolean transaction, boolean convertTextToUtf8Hex) throws IOException {
         JFileChooser chooser = new JFileChooser(); chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         chooser.setDialogTitle("Elegir carpeta para exportar SQL por operación");
         if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
         Path directory = chooser.getSelectedFile().toPath();
         List<Map.Entry<String, String>> files = new ArrayList<>();
-        addRowExportFile(files, directory, "db-diff-inserts.sql", rows, inserts, false, false, transaction, schemaEngine);
-        addRowExportFile(files, directory, "db-diff-updates.sql", rows, false, updates, false, transaction, schemaEngine);
-        addRowExportFile(files, directory, "db-diff-deletes.sql", rows, false, false, deletes, transaction, schemaEngine);
+        addRowExportFile(files, directory, "db-diff-inserts.sql", rows, inserts, false, false, transaction, schemaEngine, convertTextToUtf8Hex);
+        addRowExportFile(files, directory, "db-diff-updates.sql", rows, false, updates, false, transaction, schemaEngine, convertTextToUtf8Hex);
+        addRowExportFile(files, directory, "db-diff-deletes.sql", rows, false, false, deletes, transaction, schemaEngine, convertTextToUtf8Hex);
         List<Path> existing = files.stream().map(entry -> Path.of(entry.getKey())).filter(Files::exists).toList();
         if (!existing.isEmpty() && JOptionPane.showConfirmDialog(frame,
                 "Se reemplazarán estos archivos:\n" + existing.stream().map(Path::getFileName).map(Path::toString).collect(java.util.stream.Collectors.joining("\n")),
@@ -115,9 +121,11 @@ final class ExportDialogs {
     }
 
     private static void addRowExportFile(List<Map.Entry<String, String>> files, Path directory, String fileName,
-                                         RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes, boolean transaction, DatabaseEngine engine) {
+                                         RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes, boolean transaction,
+                                         DatabaseEngine engine, boolean convertTextToUtf8Hex) {
         if (hasSelectedRowChanges(rows, inserts, updates, deletes))
-            files.add(Map.entry(directory.resolve(fileName).toString(), RowSqlExporter.export(rows, inserts, updates, deletes, transaction, engine)));
+            files.add(Map.entry(directory.resolve(fileName).toString(), RowSqlExporter.export(rows, inserts, updates, deletes,
+                    transaction, engine, convertTextToUtf8Hex)));
     }
 
     private static boolean hasSelectedRowChanges(RowDiff.Result rows, boolean inserts, boolean updates, boolean deletes) {
