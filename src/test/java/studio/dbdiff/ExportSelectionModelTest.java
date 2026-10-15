@@ -49,6 +49,22 @@ class ExportSelectionModelTest {
         assertEquals(List.of(USERS, V_ACTIVE_USERS), selection.selectedItems());
     }
 
+    @Test void kindFilterComposesWithSearchAndPreservesHiddenSelection() {
+        ExportSelectionModel selection = new ExportSelectionModel(List.of(USERS, V_ACTIVE_USERS, OLD_VIEW), List.of(USERS));
+        selection.setKinds(Set.of(SchemaObject.Kind.VIEW));
+
+        assertEquals(List.of(V_ACTIVE_USERS, OLD_VIEW), selection.visibleItems());
+        assertEquals(List.of(), selection.selectedItems());
+        selection.setQuery("old");
+        assertEquals(List.of(OLD_VIEW), selection.visibleItems());
+        assertEquals(List.of(), selection.selectedItems());
+        assertFalse(selection.canExport(Set.of(DiffEngine.Status.CHANGED)));
+        selection.setKinds(Set.of());
+        assertEquals(List.of(USERS), selection.selectedItems());
+        selection.clear();
+        assertTrue(selection.selectedItems().isEmpty());
+    }
+
     @Test void clearRemovesVisibleAndHiddenItemsAndExportRequiresApplicableOperation() {
         ExportSelectionModel selection = new ExportSelectionModel(List.of(USERS, V_ACTIVE_USERS, OLD_VIEW), List.of(USERS));
 

@@ -174,6 +174,10 @@ final class ExportDialogs {
         exportSelection.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         exportSelection.setVisibleRowCount(4);
         JTextField objectSearch = new PlaceholderTextField("Buscar por nombre o tipo...");
+        JComboBox<ObjectKindFilter> kindFilter = new JComboBox<>();
+        kindFilter.addItem(new ObjectKindFilter(null, "Todos los tipos"));
+        for (SchemaObject.Kind kind : SchemaObject.Kind.values())
+            kindFilter.addItem(new ObjectKindFilter(kind, CatalogDisplay.kindName(kind)));
         JLabel selectionSummary = new JLabel();
         JLabel operationSummary = new JLabel();
         operationSummary.setBorder(new EmptyBorder(4, 2, 4, 2));
@@ -186,7 +190,9 @@ final class ExportDialogs {
         selectionHeader.add(selectionActions, BorderLayout.EAST);
         JPanel selectionFilter = new JPanel(new BorderLayout(8, 0));
         selectionFilter.add(objectSearch, BorderLayout.CENTER);
-        selectionFilter.add(selectionSummary, BorderLayout.EAST);
+        JPanel filterControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        filterControls.add(new JLabel("Tipo:")); filterControls.add(kindFilter); filterControls.add(selectionSummary);
+        selectionFilter.add(filterControls, BorderLayout.EAST);
         JPanel selectionTools = new JPanel(new BorderLayout(4, 5));
         selectionTools.add(selectionHeader, BorderLayout.NORTH);
         selectionTools.add(selectionFilter, BorderLayout.SOUTH);
@@ -210,7 +216,7 @@ final class ExportDialogs {
                     }
                 }
             } finally { refreshingSelection[0] = false; }
-            selectionSummary.setText(selection.selectedCount() + " seleccionados · "
+            selectionSummary.setText(selection.selectedItems().size() + " seleccionados · "
                     + exportModel.size() + " visibles / " + selection.availableCount() + " con cambios");
             refreshPreviewRef[0].run();
         };
@@ -306,7 +312,7 @@ final class ExportDialogs {
         exportSelection.addListSelectionListener(event -> {
             if (event.getValueIsAdjusting() || refreshingSelection[0]) return;
             selection.replaceVisibleSelection(exportSelection.getSelectedValuesList());
-            selectionSummary.setText(selection.selectedCount() + " seleccionados · "
+            selectionSummary.setText(selection.selectedItems().size() + " seleccionados · "
                     + exportModel.size() + " visibles / " + selection.availableCount() + " con cambios");
             refreshPreview.run();
         });
@@ -314,6 +320,12 @@ final class ExportDialogs {
             selection.setQuery(objectSearch.getText());
             refreshVisibleItems.run();
         }));
+        kindFilter.addActionListener(event -> {
+            ObjectKindFilter selectedFilter = (ObjectKindFilter) kindFilter.getSelectedItem();
+            selection.setKinds(selectedFilter == null || selectedFilter.kind() == null
+                    ? Set.of() : Set.of(selectedFilter.kind()));
+            refreshVisibleItems.run();
+        });
         selectVisible.addActionListener(event -> { selection.selectVisible(); refreshVisibleItems.run(); });
         clearSelection.addActionListener(event -> { selection.clear(); refreshVisibleItems.run(); });
         JPanel advancedOptions = new JPanel(new GridLayout(0, 1));
@@ -449,6 +461,10 @@ final class ExportDialogs {
             @Override public void removeUpdate(javax.swing.event.DocumentEvent event) { action.run(); }
             @Override public void changedUpdate(javax.swing.event.DocumentEvent event) { action.run(); }
         };
+    }
+
+    private record ObjectKindFilter(SchemaObject.Kind kind, String label) {
+        @Override public String toString() { return label; }
     }
 
     private void error(String title, Exception ex) {
