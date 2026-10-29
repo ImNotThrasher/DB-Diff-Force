@@ -4,6 +4,7 @@ package studio.dbdiff;
 public final class AppInfo {
     public static final String NAME = nameFromManifest();
     public static final String VERSION = versionFromManifest();
+    public static final String REPOSITORY = "https://github.com/ImNotThrasher/DB-Diff-Force";
 
     private AppInfo() { }
 
