@@ -8,6 +8,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridLayout;
+import java.awt.Desktop;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.Rectangle;
@@ -32,6 +33,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.IntConsumer;
 
 import javax.swing.BoxLayout;
+import javax.swing.Box;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
@@ -158,7 +160,14 @@ public final class Main {
         compareButton = button("Actualizar", false); compareButton.setIcon(UiIcons.themed(UiIcons.COMPARE, 16)); compareButton.setIconTextGap(7); compareButton.setToolTipText("Volver a leer los objetos; con selección múltiple, actualizar los seleccionados."); compareButton.addActionListener(e -> compare(true));
         exportButton = button("Exportar esquema", false); exportButton.setIcon(UiIcons.themed(UiIcons.EXPORT, 16)); exportButton.setIconTextGap(7); exportButton.addActionListener(e -> export());
         JButton settings = button("Configuración", false); settings.setIcon(UiIcons.themed(UiIcons.SETTINGS, 16)); settings.setIconTextGap(6);
-        settings.setToolTipText("Apariencia, ventana y comportamiento del comparador"); settings.addActionListener(e -> showSettings());
+        settings.setToolTipText("Apariencia, ventana y comportamiento del comparador");
+        JPopupMenu settingsMenu = new JPopupMenu();
+        javax.swing.JMenuItem preferences = new javax.swing.JMenuItem("Preferencias");
+        preferences.addActionListener(e -> showSettings());
+        javax.swing.JMenuItem about = new javax.swing.JMenuItem("Acerca de");
+        about.addActionListener(e -> showAbout());
+        settingsMenu.add(preferences); settingsMenu.add(about);
+        settings.addActionListener(e -> settingsMenu.show(settings, 0, settings.getHeight()));
         reportButton = button("Exportar informe", false); reportButton.setIcon(UiIcons.themed(UiIcons.EXPORT, 16));
         reportButton.setToolTipText("Guardar un informe HTML de la comparación actual, sin datos de filas ni script SQL de aplicación.");
         reportButton.addActionListener(e -> exportReport()); reportButton.setEnabled(false);
@@ -1092,6 +1101,30 @@ public final class Main {
         if (rememberLastComparison && currentSelection != null) saveLastComparison(currentSelection);
         else if (!rememberLastComparison) try { LastComparisonPreferences.clear(); }
         catch (IOException ex) { connectionStatus.setText("No se pudo borrar la última comparación guardada: " + ex.getMessage()); }
+    }
+
+    private void showAbout() {
+        JPanel details = new JPanel();
+        details.setOpaque(false);
+        details.setLayout(new BoxLayout(details, BoxLayout.Y_AXIS));
+        JLabel name = new JLabel(AppInfo.NAME + " · versión " + AppInfo.VERSION);
+        name.putClientProperty("FlatLaf.styleClass", "h2");
+        JButton repository = new JButton("Ver repositorio en GitHub");
+        repository.addActionListener(event -> openWebLink(AppInfo.REPOSITORY));
+        details.add(name);
+        details.add(Box.createVerticalStrut(10));
+        details.add(repository);
+        JOptionPane.showMessageDialog(frame, details, "Acerca de " + AppInfo.NAME, JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void openWebLink(String address) {
+        try {
+            if (!Desktop.isDesktopSupported()) throw new IOException("No hay un navegador disponible.");
+            Desktop.getDesktop().browse(java.net.URI.create(address));
+        } catch (IOException | UnsupportedOperationException ex) {
+            JOptionPane.showMessageDialog(frame, "No se pudo abrir el enlace:\n" + address,
+                    "Abrir enlace", JOptionPane.WARNING_MESSAGE);
+        }
     }
 
     private Rectangle loadWindowBounds() {
