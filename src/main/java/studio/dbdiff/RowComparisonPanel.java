@@ -4,8 +4,11 @@ import javax.swing.BorderFactory;
 import javax.swing.JTabbedPane;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JMenu;
+import javax.swing.JMenuItem;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
@@ -24,6 +27,9 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.FontMetrics;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
@@ -150,6 +156,10 @@ final class RowComparisonPanel extends JPanel {
             JPanel search = new JPanel(new BorderLayout(5, 0)); search.setOpaque(false);
             searchField = new PlaceholderTextField("Buscar en todas las columnas…"); searchField.putClientProperty("JTextField.leadingIcon", UiIcons.themed(UiIcons.SEARCH, 16)); searchField.setToolTipText("Filtrar las filas visibles por cualquier valor");
             search.add(searchField, BorderLayout.CENTER);
+            JButton copyVisible = new JButton("Copiar tabla visible ▾");
+            copyVisible.setToolTipText("Copiar al portapapeles las filas visibles según el filtro y la búsqueda actuales.");
+            copyVisible.addActionListener(event -> showTableCopyMenu(copyVisible));
+            search.add(copyVisible, BorderLayout.EAST);
             toolbar.add(filters, BorderLayout.NORTH); toolbar.add(search, BorderLayout.CENTER);
             if (!result.warning().isBlank()) {
                 boolean customKey = result.warning().contains("Clave personalizada verificada")
@@ -188,6 +198,7 @@ final class RowComparisonPanel extends JPanel {
             };
             changesTable.setToolTipText("");
             changesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            changesTable.setCellSelectionEnabled(true);
             changesTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
             changesTable.setFillsViewportHeight(true);
             changesTable.setRowHeight(com.formdev.flatlaf.util.UIScale.scale(34));
@@ -196,6 +207,22 @@ final class RowComparisonPanel extends JPanel {
             for (int column = 1; column < headers.length; column++)
                 changesTable.getColumnModel().getColumn(column).setCellRenderer(new FieldCellRenderer(dark));
             sorter = new TableRowSorter<>(model); changesTable.setRowSorter(sorter);
+            changesTable.addMouseListener(new MouseAdapter() {
+                @Override public void mousePressed(MouseEvent event) { showCopyPopup(event); }
+                @Override public void mouseReleased(MouseEvent event) { showCopyPopup(event); }
+
+                private void showCopyPopup(MouseEvent event) {
+                    if (!event.isPopupTrigger()) return;
+                    int viewRow = changesTable.rowAtPoint(event.getPoint());
+                    int viewColumn = changesTable.columnAtPoint(event.getPoint());
+                    if (viewRow < 0) return;
+                    changesTable.setRowSelectionInterval(viewRow, viewRow);
+                    if (viewColumn >= 0) changesTable.setColumnSelectionInterval(viewColumn, viewColumn);
+                    int modelRow = changesTable.convertRowIndexToModel(viewRow);
+                    int modelColumn = viewColumn < 0 ? -1 : changesTable.convertColumnIndexToModel(viewColumn);
+                    showRowCopyMenu(event, result.changes().get(modelRow), modelColumn);
+                }
+            });
             searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
                 @Override public void insertUpdate(javax.swing.event.DocumentEvent event) { applyFilter(); }
                 @Override public void removeUpdate(javax.swing.event.DocumentEvent event) { applyFilter(); }
@@ -335,6 +362,67 @@ final class RowComparisonPanel extends JPanel {
                 return false;
             }
         });
+    }
+
+    private void showRowCopyMenu(MouseEvent event, RowDiff.RowChange change, int modelColumn) {
+        JPopupMenu menu = new JPopupMenu();
+        if (modelColumn > 0) {
+            String column = result.columns().get(modelColumn - 1).name();
+            JMenu cell = new JMenu("Copiar celda");
+            addCopyActions(cell, change, side -> RowClipboardText.cell(change, column, side), "celda");
+            menu.add(cell);
+        }
+        JMenu row = new JMenu("Copiar fila");
+        addCopyActions(row, change, side -> RowClipboardText.row(result.columns(), change, side), "fila");
+        menu.add(row);
+        menu.show((java.awt.Component) event.getSource(), event.getX(), event.getY());
+    }
+
+    private void showTableCopyMenu(JComponent owner) {
+        JPopupMenu menu = new JPopupMenu();
+        for (RowClipboardText.Side side : RowClipboardText.Side.values()) {
+            JMenuItem item = new JMenuItem(sideName(side));
+            item.addActionListener(event -> copyVisibleTable(side));
+            menu.add(item);
+        }
+        menu.show(owner, 0, owner.getHeight());
+    }
+
+    private void addCopyActions(JMenu menu, RowDiff.RowChange change,
+                                java.util.function.Function<RowClipboardText.Side, String> textForSide, String what) {
+        for (RowClipboardText.Side side : RowClipboardText.Side.values()) {
+            JMenuItem item = new JMenuItem(sideName(side));
+            item.setEnabled(RowClipboardText.hasSide(change, side));
+            item.addActionListener(event -> copyToClipboard(textForSide.apply(side), "No se pudo copiar la " + what));
+            menu.add(item);
+        }
+    }
+
+    private void copyVisibleTable(RowClipboardText.Side side) {
+        List<RowDiff.RowChange> visibleRows = new ArrayList<>();
+        for (int viewRow = 0; viewRow < changesTable.getRowCount(); viewRow++) {
+            int modelRow = changesTable.convertRowIndexToModel(viewRow);
+            visibleRows.add(result.changes().get(modelRow));
+        }
+        String text = RowClipboardText.table(result.columns(), visibleRows, side);
+        copyToClipboard(text, "No se pudo copiar la tabla");
+    }
+
+    private static String sideName(RowClipboardText.Side side) {
+        return switch (side) {
+            case SOURCE -> "Origen";
+            case DESTINATION -> "Destino";
+            case BOTH -> "Ambos";
+        };
+    }
+
+    private void copyToClipboard(String text, String errorTitle) {
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
+        } catch (RuntimeException ex) {
+            javax.swing.JOptionPane.showMessageDialog(this, AppUtils.errorMessage(ex), errorTitle,
+                    javax.swing.JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void updateExpandedState() {

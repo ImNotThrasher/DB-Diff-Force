@@ -563,6 +563,7 @@ public final class Main {
         cancelActiveRowComparison();
         rowComparisonRequest++;
         selectedSchemaResult = null;
+        if (!keepRowComparisonExpanded) rowComparisonPanel.setExpanded(false);
         rowComparisonPanel.clearResult(false);
         if (objectCatalog.selectedValues().size() > 1) setRowComparisonVisible(false);
         if (objectCatalog.selectedValues().size() > 1) { setBusy(false, "Varios objetos seleccionados"); comparisonView.showMessage("Seleccionaste varios objetos. Usá Exportar esquema para preparar sus scripts o Actualizar para volver a leerlos. Seleccioná un solo objeto para ver su definición."); return; }

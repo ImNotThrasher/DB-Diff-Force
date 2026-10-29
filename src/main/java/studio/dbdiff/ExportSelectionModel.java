@@ -10,6 +10,7 @@ import java.util.Set;
 final class ExportSelectionModel {
     private final List<DiffEngine.Result> available;
     private final Set<SchemaObject.Key> selectedKeys = new LinkedHashSet<>();
+    private Set<SchemaObject.Kind> kinds = Set.of();
     private String query = "";
 
     ExportSelectionModel(List<DiffEngine.Result> available, List<DiffEngine.Result> preselected) {
@@ -22,10 +23,14 @@ final class ExportSelectionModel {
 
     void setQuery(String value) { query = value == null ? "" : value.trim().toLowerCase(Locale.ROOT); }
 
+    void setKinds(Set<SchemaObject.Kind> value) { kinds = Set.copyOf(value); }
+
     List<DiffEngine.Result> visibleItems() {
-        if (query.isEmpty()) return available;
+        if (query.isEmpty() && kinds.isEmpty()) return available;
         List<DiffEngine.Result> visible = new ArrayList<>();
         for (DiffEngine.Result result : available) {
+            if (!kinds.isEmpty() && !kinds.contains(result.key().kind())) continue;
+            if (query.isEmpty()) { visible.add(result); continue; }
             String searchable = result.key().qualifiedName() + " " + CatalogDisplay.kindName(result.key().kind());
             if (searchable.toLowerCase(Locale.ROOT).contains(query)) visible.add(result);
         }
@@ -33,14 +38,15 @@ final class ExportSelectionModel {
     }
 
     List<DiffEngine.Result> selectedItems() {
-        return available.stream().filter(result -> selectedKeys.contains(result.key())).toList();
+        return available.stream().filter(result -> selectedKeys.contains(result.key()))
+                .filter(result -> kinds.isEmpty() || kinds.contains(result.key().kind())).toList();
     }
 
     boolean isSelected(SchemaObject.Key key) { return selectedKeys.contains(key); }
     int selectedCount() { return selectedKeys.size(); }
     int availableCount() { return available.size(); }
     boolean canExport(Set<DiffEngine.Status> operations) {
-        return available.stream().anyMatch(result -> selectedKeys.contains(result.key()) && operations.contains(result.status()));
+        return selectedItems().stream().anyMatch(result -> operations.contains(result.status()));
     }
 
     void selectVisible() { visibleItems().stream().map(DiffEngine.Result::key).forEach(selectedKeys::add); }

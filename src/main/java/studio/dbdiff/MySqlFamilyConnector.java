@@ -426,7 +426,10 @@ abstract class MySqlFamilyConnector implements DatabaseConnector {
     }
 
     private SchemaObject loadView(SchemaObject.Key key) throws SQLException {
-        try { String definition = showCreate(key, 2); return new SchemaObject(key, definition, signature(definition, false)); }
+        try {
+            String definition = MySqlViewFormatter.format(showCreate(key, 2));
+            return new SchemaObject(key, definition, signature(definition, false));
+        }
         catch (SQLException ex) { String definition = "-- " + AppInfo.NAME + ": SHOW CREATE VIEW unavailable (" + safeMessage(ex) + ")"; return new SchemaObject(key, definition, signature(definition, false)); }
     }
 

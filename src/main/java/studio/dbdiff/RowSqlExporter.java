@@ -19,6 +19,11 @@ public final class RowSqlExporter {
 
     public static String export(RowDiff.Result result, boolean inserts, boolean updates, boolean deletes,
                                 boolean transaction, DatabaseEngine engine) {
+        return export(result, inserts, updates, deletes, transaction, engine, true);
+    }
+
+    public static String export(RowDiff.Result result, boolean inserts, boolean updates, boolean deletes,
+                                boolean transaction, DatabaseEngine engine, boolean convertTextToUtf8Hex) {
         StringBuilder sql = new StringBuilder("-- " + AppInfo.NAME + " row export\n-- Review before use. This file was not executed.\n");
         if (result.truncated()) sql.append("-- WARNING: comparison was truncated; this export contains only the retained first changes.\n");
         boolean sqlServer = engine == DatabaseEngine.SQLSERVER;
@@ -34,12 +39,12 @@ public final class RowSqlExporter {
                                 ? result.columns().stream().filter(column -> !isComputed(column)).toList() : result.columns();
                         statements.append("INSERT INTO ").append(table).append(" (")
                                 .append(columnList(insertColumns, engine)).append(") VALUES (")
-                                .append(values(insertColumns, change.source(), engine)).append(");\n");
+                                .append(values(insertColumns, change.source(), engine, convertTextToUtf8Hex)).append(");\n");
                     }
                 }
                 case TARGET_ONLY -> {
                     if (deletes) statements.append(sqlServer ? "DELETE FROM " : "DELETE FROM ").append(table)
-                            .append(" WHERE ").append(predicate(result.comparisonKey(), change.key(), engine))
+                            .append(" WHERE ").append(predicate(result.comparisonKey(), change.key(), engine, convertTextToUtf8Hex))
                             .append(sqlServer ? ";\n" : " LIMIT 1;\n");
                 }
                 case DIFFERENT -> {
@@ -53,9 +58,9 @@ public final class RowSqlExporter {
                         if (i > 0) statements.append(", ");
                         RowDiff.Column column = changed.get(i);
                         statements.append(quote(column.name(), engine)).append(" = ")
-                                .append(literal(change.source().get(column.name()), column.type(), engine));
+                                .append(literal(change.source().get(column.name()), column.type(), engine, convertTextToUtf8Hex));
                     }
-                    statements.append(" WHERE ").append(predicate(result.comparisonKey(), change.key(), engine))
+                    statements.append(" WHERE ").append(predicate(result.comparisonKey(), change.key(), engine, convertTextToUtf8Hex))
                             .append(sqlServer ? ";\n" : " LIMIT 1;\n");
                 }
                 case IDENTICAL -> { /* No migration is needed for an unchanged row. */ }
@@ -77,11 +82,12 @@ public final class RowSqlExporter {
         return quote(result.targetDatabase(), engine) + "." + quote(result.table().name(), engine);
     }
 
-    private static String predicate(List<RowDiff.Column> keys, Map<String, Object> row, DatabaseEngine engine) {
+    private static String predicate(List<RowDiff.Column> keys, Map<String, Object> row, DatabaseEngine engine,
+                                    boolean convertTextToUtf8Hex) {
         List<String> predicates = new ArrayList<>();
         for (RowDiff.Column key : keys) {
             Object value = row.get(key.name());
-            predicates.add(quote(key.name(), engine) + (value == null ? " IS NULL" : " = " + literal(value, key.type(), engine)));
+            predicates.add(quote(key.name(), engine) + (value == null ? " IS NULL" : " = " + literal(value, key.type(), engine, convertTextToUtf8Hex)));
         }
         return String.join(" AND ", predicates);
     }
@@ -90,14 +96,16 @@ public final class RowSqlExporter {
         return columns.stream().map(c -> quote(c.name(), engine)).collect(java.util.stream.Collectors.joining(", "));
     }
 
-    private static String values(List<RowDiff.Column> columns, Map<String, Object> row, DatabaseEngine engine) {
-        return columns.stream().map(c -> literal(row.get(c.name()), c.type(), engine)).collect(java.util.stream.Collectors.joining(", "));
+    private static String values(List<RowDiff.Column> columns, Map<String, Object> row, DatabaseEngine engine,
+                                 boolean convertTextToUtf8Hex) {
+        return columns.stream().map(c -> literal(row.get(c.name()), c.type(), engine, convertTextToUtf8Hex))
+                .collect(java.util.stream.Collectors.joining(", "));
     }
 
     private static boolean isIdentity(RowDiff.Column column) { return column.columnType().contains("|identity=true"); }
     private static boolean isComputed(RowDiff.Column column) { return column.columnType().contains("|computed=true"); }
 
-    private static String literal(Object value, String type, DatabaseEngine engine) {
+    private static String literal(Object value, String type, DatabaseEngine engine, boolean convertTextToUtf8Hex) {
         if (value == null) return "NULL";
         String normalizedType = type.toLowerCase(Locale.ROOT);
         if (isNumeric(normalizedType)) {
@@ -119,7 +127,7 @@ public final class RowSqlExporter {
             boolean unicode = Set.of("nchar", "nvarchar", "ntext").contains(normalizedType);
             return (unicode ? "N" : "") + "'" + escaped + "'";
         }
-        if (Set.of("char", "varchar", "tinytext", "text", "mediumtext", "longtext", "enum", "set").contains(normalizedType)) {
+        if (convertTextToUtf8Hex && Set.of("char", "varchar", "tinytext", "text", "mediumtext", "longtext", "enum", "set").contains(normalizedType)) {
             String hex = HexFormat.of().formatHex(value.toString().getBytes(StandardCharsets.UTF_8));
             return "CONVERT(X'" + hex + "' USING utf8mb4)";
         }
